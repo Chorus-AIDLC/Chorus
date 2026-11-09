@@ -12,6 +12,11 @@ vi.mock("@/services/daemon-connection.service", () => ({
   touchConnection: (...args: unknown[]) => mockTouchConnection(...args),
 }));
 
+const mockSweep = vi.fn();
+vi.mock("@/services/daemon-session.service", () => ({
+  sweepExpiredCliLeasesForConnection: (...args: unknown[]) => mockSweep(...args),
+}));
+
 import { POST } from "@/app/api/daemon/connection-heartbeat/route";
 
 const companyUuid = "company-1";
@@ -54,6 +59,18 @@ describe("POST /api/daemon/connection-heartbeat", () => {
       { uuid: connectionUuid, connectedAt: new Date(connectedAt) },
       agentUuid,
     );
+  });
+
+  it("piggybacks the expired CLI lease sweep on an acknowledged heartbeat only", async () => {
+    const res = await POST(request({ connectionUuid, connectedAt }), emptyCtx);
+    expect(res.status).toBe(200);
+    expect(mockSweep).toHaveBeenCalledWith(companyUuid, connectionUuid);
+
+    mockSweep.mockClear();
+    mockTouchConnection.mockResolvedValueOnce(false);
+    const res2 = await POST(request({ connectionUuid, connectedAt }), emptyCtx);
+    expect(res2.status).toBe(404);
+    expect(mockSweep).not.toHaveBeenCalled();
   });
 
   it("rejects unauthenticated and non-daemon callers without touching", async () => {

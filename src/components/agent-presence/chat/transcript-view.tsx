@@ -377,7 +377,9 @@ export function TranscriptView({
   // at the session's origin connection. NOT a synthesized execution row — a fake row would
   // leak into the status rollup and the elapsed timer above.
   const hasRunningTurn = useMemo(
-    () => turns.some((tn) => tn.status === "running"),
+    // A `cli_session` turn is the terminal's own run (cli-agent-session-sync D8), never a
+    // daemon phantom — it must not offer the stuck-turn interrupt.
+    () => turns.some((tn) => tn.status === "running" && tn.trigger !== "cli_session"),
     [turns],
   );
   // Gated on the absence of a RUNNING execution, not of any execution at all: a stale
@@ -386,7 +388,7 @@ export function TranscriptView({
   // unclearable. "No live execution row" is the spec's condition, and a terminal row is
   // not live. Once the turn is cleared this returns null and the row's Resume comes back.
   const stuckTurnTarget = useMemo(() => {
-    if (runningExecution || !hasRunningTurn || !session) return null;
+    if (runningExecution || !hasRunningTurn || !session || !session.originConnectionUuid) return null;
     return {
       connectionUuid: session.originConnectionUuid,
       ...sessionControlTarget(session),

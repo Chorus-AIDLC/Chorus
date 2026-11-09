@@ -88,7 +88,7 @@ export interface SessionTarget {
   agentUuid: string;
   sessionId: string;
   directIdeaUuid: string | null;
-  originConnectionUuid: string;
+  originConnectionUuid: string | null;
   status: string;
   title: string | null;
   lastTurnAt: string;

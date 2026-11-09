@@ -41,6 +41,7 @@ const mockAssertContinuable = vi.fn();
 const mockGetVisibleSessions = vi.fn();
 const mockGetSessionsPageForAgent = vi.fn();
 const mockGetFirstInstruction = vi.fn();
+const mockDrainExpiredCliLeases = vi.fn(async (..._a: unknown[]) => 0);
 vi.mock("@/services/daemon-session.service", () => {
   // Defined inside the factory (hoisted with the mock) so the class is initialized
   // before the SUT imports it. Mirrors the real SessionReadOnlyError shape.
@@ -60,6 +61,11 @@ vi.mock("@/services/daemon-session.service", () => {
     getSessionsPageForAgent: (...a: unknown[]) => mockGetSessionsPageForAgent(...a),
     getFirstInstructionBySessionUuid: (...a: unknown[]) => mockGetFirstInstruction(...a),
     SessionReadOnlyError,
+    SessionUnboundError: class SessionUnboundError extends Error { readonly code = "session_unbound"; },
+    SessionNotContinuableError: class SessionNotContinuableError extends Error { readonly code = "session_not_continuable"; },
+    drainExpiredCliLeases: (...a: unknown[]) => mockDrainExpiredCliLeases(...a),
+    isCliLeased: (s: { cliLeaseHolder?: string | null; cliLeaseExpiresAt?: Date | null }) =>
+      s.cliLeaseHolder != null && s.cliLeaseExpiresAt != null && s.cliLeaseExpiresAt.getTime() > Date.now(),
     STALE_THRESHOLD_MS: 90_000,
   };
 });
@@ -113,7 +119,11 @@ import {
 } from "@/services/daemon-instruction.service";
 // The mocked SessionReadOnlyError class (defined in the vi.mock factory above), imported
 // so the offline-origin test can construct + assert against the same class the SUT sees.
-import { SessionReadOnlyError } from "@/services/daemon-session.service";
+import {
+  SessionReadOnlyError,
+  SessionNotContinuableError,
+  SessionUnboundError,
+} from "@/services/daemon-session.service";
 import * as projectAccess from "@/services/project-access.service";
 
 // ===== Helpers =====
@@ -1028,5 +1038,79 @@ describe("repointSessionOriginAndSend — private-project isolation", () => {
     ).rejects.toBeInstanceOf(SessionNotVisibleError);
     expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
     expect(mockNotificationCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe("cli-agent-session-sync — send / repoint gates", () => {
+  const cliSession = {
+    uuid: sessionUuid, agentUuid, sessionId: adHocSessionId, directIdeaUuid: null,
+    originConnectionUuid: connectionUuid, runtimeCwd: "/home/u/repo", cliHost: "box", continuable: true,
+    cliLeaseHolder: null as string | null, cliLeaseExpiresAt: null as Date | null,
+  };
+
+  it("queues (stores pending, no deliver_turn) while the CLI lease is live", async () => {
+    const leased = { ...cliSession, cliLeaseHolder: "h", cliLeaseExpiresAt: new Date(Date.now() + 60_000) };
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(leased);
+    const res = await sendInstruction(userAuth, { sessionUuid, instructionText: "later" });
+    expect(res.queued).toBe(true);
+    expect(res.turn.status).toBe("pending");
+    expect(mockNotificationCreate).toHaveBeenCalledTimes(1);
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+    expect(mockDrainExpiredCliLeases).toHaveBeenCalledWith(companyUuid, [leased], expect.any(Date));
+  });
+
+  it("delivers to the bound origin with the CLI runtimeCwd once the lease is gone", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(cliSession);
+    const res = await sendInstruction(userAuth, { sessionUuid, instructionText: "now" });
+    expect(res.queued).toBe(false);
+    expect(mockDispatchControl).toHaveBeenCalledWith(expect.objectContaining({
+      command: "deliver_turn", targetConnectionUuid: connectionUuid, runtimeCwd: "/home/u/repo",
+    }));
+  });
+
+  it("an Idea-anchored CLI session keys its instruction on its own sessionId (never the Idea's)", async () => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ ...cliSession, directIdeaUuid: ideaUuid });
+    await sendInstruction(userAuth, { sessionUuid, instructionText: "go" });
+    const arg = mockNotificationCreate.mock.calls[0][0];
+    expect(arg.entityType).toBe(AD_HOC_ENTITY_TYPE);
+    expect(arg.entityUuid).toBe(adHocSessionId);
+    expect(arg.projectUuid).toBe("");
+  });
+
+  it.each([
+    ["unbound", SessionUnboundError, { originConnectionUuid: null }],
+    ["not continuable", SessionNotContinuableError, { continuable: false }],
+  ])("repoint refuses a %s CLI session before any write", async (_name, ErrorClass, patch) => {
+    mockPrisma.daemonSession.findFirst.mockResolvedValue({ ...cliSession, ...patch });
+    await expect(repointSessionOriginAndSend(userAuth, {
+      sessionUuid, connectionUuid: otherConnectionUuid, instructionText: "go",
+    })).rejects.toBeInstanceOf(ErrorClass);
+    expect(mockPrisma.daemonSession.update).not.toHaveBeenCalled();
+  });
+
+  it("repoint keeps the turn queued while the session is still CLI-leased", async () => {
+    const leased = { ...cliSession, cliLeaseHolder: "h", cliLeaseExpiresAt: new Date(Date.now() + 60_000) };
+    mockPrisma.daemonSession.findFirst.mockResolvedValue(leased);
+    mockPrisma.daemonSession.findUnique.mockResolvedValue({
+      ...leased, backendSessionId: null, status: "active", title: null, lastTurnAt: new Date(),
+      totalInputTokens: 0, totalOutputTokens: 0, totalCacheReadTokens: 0, totalCacheCreationTokens: 0,
+      createdAt: new Date(), updatedAt: new Date(), cliCwd: "/home/u/repo",
+    });
+    mockIsConnectionLive.mockReset().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    mockConnectionBelongsToAgent.mockResolvedValue(true);
+    const { session } = await repointSessionOriginAndSend(userAuth, {
+      sessionUuid, connectionUuid: otherConnectionUuid, instructionText: "go",
+    });
+    expect(mockDispatchControl).not.toHaveBeenCalled();
+    expect(session).toMatchObject({ cli: { leased: true, host: "box", cwd: "/home/u/repo" }, continuable: true });
+  });
+
+  it("an unbound session is never online in the targeting list", async () => {
+    mockGetVisibleSessions.mockResolvedValue([{ ...cliSession, originConnectionUuid: null, uuid: "s-unbound" }]);
+    mockGetFirstInstruction.mockResolvedValue(new Map());
+    mockPrisma.daemonConnection.findMany.mockResolvedValue([]);
+    const [view] = await getVisibleSessionsWithOrigin(userAuth);
+    expect(view.originOnline).toBe(false);
+    expect(mockPrisma.daemonConnection.findMany.mock.calls[0][0].where.uuid).toEqual({ in: [] });
   });
 });

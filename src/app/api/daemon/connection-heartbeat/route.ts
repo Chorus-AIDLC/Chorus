@@ -4,6 +4,7 @@ import { withErrorHandler } from "@/lib/api-handler";
 import { success, errors } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
 import { touchConnection } from "@/services/daemon-connection.service";
+import { sweepExpiredCliLeasesForConnection } from "@/services/daemon-session.service";
 
 const bodySchema = z.object({
   connectionUuid: z.string().min(1),
@@ -40,6 +41,11 @@ export const POST = withErrorHandler(async (request: NextRequest) => {
   if (!acknowledged) {
     return errors.notFound("Connection");
   }
+
+  // cli-agent-session-sync D4 trigger 2: piggyback the expired-CLI-lease sweep on the
+  // origin daemon's heartbeat (no server timer). Best-effort — it swallows + logs its own
+  // errors, so a sweep failure never fails the heartbeat acknowledgment.
+  await sweepExpiredCliLeasesForConnection(auth.companyUuid, parsed.data.connectionUuid);
 
   return success({ acknowledged: true });
 });
