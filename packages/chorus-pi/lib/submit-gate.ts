@@ -181,9 +181,10 @@ export function evaluateGate(
     if (!uuid) return undefined;
     const mutation = state.taskMutation.get(uuid);
     const receipt = state.taskReceipts.get(uuid);
+    let verdict: GateVerdict | undefined;
     if (!receipt || receipt.seq <= (mutation?.at ?? 0)) {
       if (mutation?.status === "to_verify" || receipt?.status === "to_verify") {
-        return {
+        verdict = {
           reason:
             `task ${uuid} was reported with status "to_verify" and never read back afterwards. ` +
             `chorus_submit_for_verify is the in_progress -> to_verify transition, so this submit will be ` +
@@ -191,16 +192,16 @@ export function evaluateGate(
             `Read it with chorus_get_task first; if it already sits in to_verify, move it back with ` +
             `chorus_update_task({status: "in_progress"}) before submitting. ${RECOVERY_NOTE}`,
         };
+      } else {
+        verdict = {
+          reason:
+            `task ${uuid} has no fresh status read before submit. Call chorus_get_task and confirm ` +
+            `status is in_progress first; submitting from a stale assumption is what produces ` +
+            `"Can only submit for verification from in_progress status".`,
+        };
       }
-      return {
-        reason:
-          `task ${uuid} has no fresh status read before submit. Call chorus_get_task and confirm ` +
-          `status is in_progress first; submitting from a stale assumption is what produces ` +
-          `"Can only submit for verification from in_progress status".`,
-      };
-    }
-    if (receipt.status && receipt.status !== "in_progress") {
-      return {
+    } else if (receipt.status && receipt.status !== "in_progress") {
+      verdict = {
         reason:
           `chorus_get_task reported status "${receipt.status}" for task ${uuid}; submit requires ` +
           `in_progress. Move it back with chorus_update_task({status: "in_progress"}) if that is the ` +
@@ -209,7 +210,7 @@ export function evaluateGate(
     }
     state.taskReceipts.delete(uuid); // a submit consumes the receipt
     state.taskMutation.set(uuid, { at, tool: nativeTool });
-    return undefined;
+    return verdict;
   }
 
   if (nativeTool === PROPOSAL_SUBMIT) {
@@ -217,25 +218,24 @@ export function evaluateGate(
     const receipt = uuid
       ? state.proposalReceipts.get(uuid)
       : [...state.proposalReceipts.values()].sort((a, b) => b.seq - a.seq)[0];
+    const draftAt = uuid ? (state.proposalDraftMutation.get(uuid) ?? 0) : 0;
+    let verdict: GateVerdict | undefined;
     if (!receipt) {
-      return {
+      verdict = {
         reason:
           `proposal ${uuid ?? "(unknown)"} has no chorus_pm_validate_proposal receipt. ` +
           `Call validate first: errors block submission, warnings need a disposition, and any later ` +
           `draft edit invalidates the receipt.`,
       };
-    }
-    const draftAt = uuid ? (state.proposalDraftMutation.get(uuid) ?? 0) : 0;
-    if (receipt.seq <= draftAt || receipt.seq <= state.anyDraftMutation) {
-      return {
+    } else if (receipt.seq <= draftAt || receipt.seq <= state.anyDraftMutation) {
+      verdict = {
         reason:
           `proposal ${uuid ?? "(unknown)"} was edited after its last validate receipt; ` +
           `re-run chorus_pm_validate_proposal before submitting.`,
       };
-    }
-    if (receipt.valid === false) {
+    } else if (receipt.valid === false) {
       const detail = (receipt.issues ?? []).slice(0, 3).join("; ");
-      return {
+      verdict = {
         reason:
           `the last chorus_pm_validate_proposal reported valid:false` +
           (detail ? ` (${detail})` : "") +
@@ -249,7 +249,7 @@ export function evaluateGate(
       state.proposalReceipts.clear();
       state.anyDraftMutation = at;
     }
-    return undefined;
+    return verdict;
   }
 
   if (TASK_MUTATE.has(nativeTool)) {
