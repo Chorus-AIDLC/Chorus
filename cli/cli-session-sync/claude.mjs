@@ -49,6 +49,23 @@ const INFO_SHORT = new Set(["v", "h"]);
 
 /** Local-only command/shell echo wrappers the TUI writes as user lines — terminal plumbing, not conversation. */
 const LOCAL_ECHO_RE = /^\s*<(local-command-stdout|local-command-stderr|local-command-caveat|bash-stdout|bash-stderr)>/;
+/**
+ * A slash-command invocation record the TUI writes as a user line:
+ * `<command-name>/x</command-name><command-message>…</command-message><command-args>…</command-args>`.
+ * It is rendered as the readable `/x args` the user typed; session-exit commands are dropped
+ * (they are terminal plumbing, not conversation).
+ */
+const COMMAND_RE = /^\s*<command-name>\s*([^<]*?)\s*<\/command-name>[\s\S]*?(?:<command-args>([\s\S]*?)<\/command-args>)?\s*$/;
+const EXIT_COMMANDS = new Set(["/exit", "/quit"]);
+
+function normalizeCommandEcho(text) {
+  const m = COMMAND_RE.exec(text);
+  if (!m) return text;
+  const name = m[1].startsWith("/") ? m[1] : `/${m[1]}`;
+  if (EXIT_COMMANDS.has(name)) return null;
+  const args = (m[2] ?? "").trim();
+  return args ? `${name} ${args}` : name;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -134,6 +151,11 @@ export function claudeDiskEntryToMessage(entry) {
   const msg = extractTranscriptText(normalized);
   if (!msg) return null;
   if (msg.role === "user" && LOCAL_ECHO_RE.test(msg.text)) return null;
+  if (msg.role === "user") {
+    const text = normalizeCommandEcho(msg.text);
+    if (text === null) return null;
+    if (text !== msg.text) return { ...msg, text };
+  }
   return msg;
 }
 

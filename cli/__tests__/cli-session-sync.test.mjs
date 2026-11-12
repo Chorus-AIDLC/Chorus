@@ -496,6 +496,15 @@ describe("claudeDiskEntryToMessage", () => {
     expect(claudeDiskEntryToMessage({ type: "attachment" })).toBeNull();
     expect(claudeDiskEntryToMessage({ type: "user", message: { role: "user", content: "<bash-stdout>x</bash-stdout>" } })).toBeNull();
   });
+
+  it("renders slash-command invocation records readably and drops /exit (Claude Code 2.1.289 disk shape)", () => {
+    const cmd = (name, args) => ({ type: "user", message: { role: "user", content: `<command-name>${name}</command-name>\n            <command-message>${name.slice(1)}</command-message>\n            <command-args>${args}</command-args>` } });
+    expect(claudeDiskEntryToMessage(cmd("/exit", ""))).toBeNull();
+    expect(claudeDiskEntryToMessage(cmd("/quit", ""))).toBeNull();
+    expect(claudeDiskEntryToMessage(cmd("/model", "haiku"))).toEqual({ role: "user", text: "/model haiku" });
+    expect(claudeDiskEntryToMessage(cmd("/chorus:develop", ""))).toEqual({ role: "user", text: "/chorus:develop" });
+    expect(claudeDiskEntryToMessage({ type: "user", message: { role: "user", content: "see <command-name>/x</command-name> inline" } })).toEqual({ role: "user", text: "see <command-name>/x</command-name> inline" });
+  });
 });
 
 // ─── Adapter contract / registry ─────────────────────────────────────────────
