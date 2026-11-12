@@ -39,6 +39,21 @@ export function isHistoryUnavailableError(error, threadId) {
     && error.rpcMessage === `no rollout found for thread id ${threadId}`;
 }
 
+/**
+ * Transient thread-store writer conflict on resume: another Codex process still holds the
+ * thread's writer lock. Observed live with Codex 0.167: after an interactive `codex` TUI
+ * exits, its managed App Server daemon keeps the thread loaded (lock held) for ~60 s, so a
+ * daemon wake that resumes the same thread right away (CLI session sync drains the queued
+ * Chorus turn on exit) fails with exactly this message. Retryable — never a fallback.
+ */
+export function isThreadWriterConflictError(error, threadId) {
+  if (!(error instanceof CodexAppServerError) || error.code !== "RPC_ERROR"
+    || error.method !== "thread/resume" || typeof threadId !== "string" || !threadId
+    || typeof error.rpcMessage !== "string") return false;
+  const expected = `thread ${threadId} already has an active writer`;
+  return error.rpcMessage === expected || error.rpcMessage.endsWith(`: ${expected}`);
+}
+
 /** No user answers or positive approvals are ever synthesized. */
 export function headlessResponseFor(method) {
   switch (method) {

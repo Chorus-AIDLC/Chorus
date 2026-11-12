@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { CODEX_FAMILY, CHORUS_MCP_APPROVAL_CONFIG, resolveFamilyPath } from "./codex-family.mjs";
-import { CodexAppServerClient, CodexAppServerError, isHistoryUnavailableError } from "./codex-app-server-client.mjs";
+import { CodexAppServerClient, CodexAppServerError, isHistoryUnavailableError, isThreadWriterConflictError } from "./codex-app-server-client.mjs";
 import { CodexAppServerEvents } from "./codex-app-server-events.mjs";
 import { registerProcessStopHook } from "./process-stop-hooks.mjs";
 import { killProcessTree } from "./process-killer.mjs";
@@ -158,6 +158,11 @@ export class CodexSpawner {
     this.maxBufferedBytes = opts.maxBufferedBytes;
     this.killProcessTreeFn = opts.killProcessTreeFn ?? killProcessTree;
     this.killOptions = opts.killOptions ?? {};
+    // Resume retry window for a transient thread writer conflict (see
+    // isThreadWriterConflictError): Codex's managed App Server keeps a just-exited TUI's
+    // thread locked for ~60 s, so wait it out instead of failing the queued turn.
+    this.writerConflictRetryMs = opts.writerConflictRetryMs ?? 120_000;
+    this.writerConflictIntervalMs = opts.writerConflictIntervalMs ?? 2_000;
   }
 
   /** One real stdio child and one authoritative turn per wake. */
@@ -179,6 +184,7 @@ export class CodexSpawner {
     let wakeFault = null;
     let processFault = null;
     let unobserve;
+    let cancelPause = null;
     const fault = (code) => new CodexAppServerError(code, `${appServer}: ${code}`);
     // Diagnostic text is fixed, never provider errors, callbacks, paths or values.
     const log = (level, text) => { try { this.logger[level]?.(text); } catch {} };
@@ -306,7 +312,7 @@ export class CodexSpawner {
       });
       unregister = registerProcessStopHook(child, ({ deadline, protocolDeadline = deadline, reason, beforeClose }) => {
         stopDeadline = Math.min(stopDeadline ?? Infinity, deadline);
-        if (reason !== "cleanup") cancelled = true;
+        if (reason !== "cleanup") { cancelled = true; cancelPause?.(); }
         if (reason === "cleanup") {
           return (async () => { try { await beforeClose?.(); } finally { client.close(); } })();
         }
@@ -349,15 +355,38 @@ export class CodexSpawner {
       if (!fullAccess && chorusMcpConfigured) setup.config = { ...CHORUS_MCP_APPROVAL_CONFIG };
       let fallback = false;
       if (threadId) {
-        try {
-          // TRAE CLI 0.209.1 rejects excludeTurns without experimentalApi (see profile).
-          await establishThread("thread/resume", this.profile.resumeExcludeTurns
-            ? { ...setup, threadId, excludeTurns: true } : { ...setup, threadId });
-        } catch (error) {
-          ensureRunning();
-          if (!isHistoryUnavailableError(error, threadId)) throw error;
-          fallback = true;
-          await establishThread("thread/start", setup);
+        // TRAE CLI 0.209.1 rejects excludeTurns without experimentalApi (see profile).
+        const resumeParams = this.profile.resumeExcludeTurns
+          ? { ...setup, threadId, excludeTurns: true } : { ...setup, threadId };
+        const writerDeadline = Date.now() + this.writerConflictRetryMs;
+        let waitingLogged = false;
+        for (;;) {
+          try {
+            await establishThread("thread/resume", resumeParams);
+            break;
+          } catch (error) {
+            ensureRunning();
+            if (isThreadWriterConflictError(error, threadId) && Date.now() < writerDeadline) {
+              if (!waitingLogged) {
+                waitingLogged = true;
+                log("info", `[Chorus] ${name} thread is still held by another ${name} process (e.g. a just-exited interactive session); retrying resume for up to ${Math.round(this.writerConflictRetryMs / 1000)}s.`);
+              }
+              await Promise.race([
+                new Promise((resolve) => {
+                  const timer = setTimeout(resolve, Math.max(1, Math.min(this.writerConflictIntervalMs, writerDeadline - Date.now())));
+                  cancelPause = () => { clearTimeout(timer); resolve(); };
+                }),
+                client.failure.catch(() => {}),
+              ]);
+              cancelPause = null;
+              ensureRunning();
+              continue;
+            }
+            if (!isHistoryUnavailableError(error, threadId)) throw error;
+            fallback = true;
+            await establishThread("thread/start", setup);
+            break;
+          }
         }
       } else await establishThread("thread/start", setup);
       ensureRunning();
