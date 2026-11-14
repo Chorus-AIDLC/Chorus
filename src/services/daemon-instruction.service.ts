@@ -53,6 +53,12 @@ import {
   getSessionsPageForAgent,
   getFirstInstructionBySessionUuid,
   publishTranscriptEvent,
+  createPendingTurn,
+  findReusablePendingInstructionTurn,
+  drainExpiredCliLeases,
+  isCliLeased,
+  SessionNotContinuableError,
+  SessionUnboundError,
   STALE_THRESHOLD_MS,
   type SessionView,
   type TurnView,
@@ -63,6 +69,7 @@ import {
 } from "@/services/daemon-execution.service";
 import { resolveProjectAgentCwdTarget } from "@/services/project-agent-cwd.service";
 import { CONVERSATIONAL_IDEA_DESCRIPTION_MAX_CHARS } from "@/lib/conversational-idea";
+import { toCliSessionView } from "@/services/daemon-cli-lease";
 
 // ===== Constants =====
 
@@ -238,10 +245,16 @@ async function findVisibleSession(
   auth: { type: string; companyUuid: string; actorUuid: string },
   sessionUuid: string,
 ): Promise<{
+  uuid: string;
   agentUuid: string;
   sessionId: string;
   directIdeaUuid: string | null;
-  originConnectionUuid: string;
+  originConnectionUuid: string | null;
+  runtimeCwd: string | null;
+  cliLeaseHolder: string | null;
+  cliLeaseExpiresAt: Date | null;
+  cliHost: string | null;
+  continuable: boolean;
 } | null> {
   const scope =
     auth.type === "agent"
@@ -252,14 +265,33 @@ async function findVisibleSession(
     // `originConnectionUuid` is selected so the send path can ping ONLY the origin
     // connection (origin-only live delivery, 子2 keystone) — never another connection
     // of the same agent.
+    // cli-agent-session-sync: the lease, launch host and continuable flag drive the
+    // queue-instead-of-deliver gate and the distinct unbound / not-continuable refusals.
     select: {
+      uuid: true,
       agentUuid: true,
       sessionId: true,
       directIdeaUuid: true,
       originConnectionUuid: true,
+      runtimeCwd: true,
+      cliLeaseHolder: true,
+      cliLeaseExpiresAt: true,
+      cliHost: true,
+      continuable: true,
     },
   });
   return session;
+}
+
+/**
+ * A CLI-registered session anchored to an Idea keeps its OWN server-generated `sessionId`
+ * (never the Idea uuid — that key belongs to the Idea's daemon conversation, and its
+ * autonomous wakes must never land on a terminal conversation). Its instructions are
+ * therefore keyed on the session's own business key (the non-lineage ad-hoc entity type),
+ * exactly like an ad-hoc session, instead of being resolved through Idea lineage.
+ */
+function keysOnOwnSessionId(session: { sessionId: string; directIdeaUuid: string | null; cliHost: string | null }): boolean {
+  return session.cliHost != null && session.directIdeaUuid != null && session.sessionId !== session.directIdeaUuid;
 }
 
 /**
@@ -290,11 +322,19 @@ async function createInstructionTurn(params: {
   // the notification chokepoint applies its project-access recipient filter.
   projectUuid?: string;
   instructionText: string;
+  // Key the turn on the session's own `sessionId` even though it has an Idea anchor
+  // (CLI-registered Idea-anchored sessions — see `keysOnOwnSessionId`).
+  keyOnSessionId?: boolean;
+  // CLI-leased send (queue until CLI exit): when the chokepoint creates no turn because no
+  // daemon of the agent is online right now, persist the queued turn directly on THIS session
+  // (reconnect backfill delivers it once the lease is released and the origin is back).
+  queueDirectly?: boolean;
 }): Promise<TurnView> {
   const { auth, agentUuid, sessionUuid, sessionId, directIdeaUuid, instructionText } = params;
 
-  const entityType = directIdeaUuid != null ? "idea" : AD_HOC_ENTITY_TYPE;
-  const entityUuid = directIdeaUuid != null ? directIdeaUuid : sessionId;
+  const lineage = directIdeaUuid != null && !params.keyOnSessionId;
+  const entityType = lineage ? "idea" : AD_HOC_ENTITY_TYPE;
+  const entityUuid = lineage ? (directIdeaUuid as string) : sessionId;
 
   // `createReturningTurn` runs the chokepoint and hands back the EXACT turn it created — no
   // read-back by `seq desc`, so a concurrent autonomous wake landing a higher-seq turn in
@@ -303,8 +343,9 @@ async function createInstructionTurn(params: {
     companyUuid: auth.companyUuid,
     // Idea-anchored: the idea's project, so the chokepoint's project-access filter applies.
     // Ad-hoc: "" (owner-scoped, not tied to a project board). The instruction is not
-    // surfaced in the Activity stream.
-    projectUuid: params.projectUuid ?? "",
+    // surfaced in the Activity stream. A session keyed on its own id carries no project on
+    // the notification (delivery re-checks the session's Idea project access instead).
+    projectUuid: lineage ? params.projectUuid ?? "" : "",
     projectName: "",
     recipientType: "agent",
     recipientUuid: agentUuid,
@@ -319,6 +360,10 @@ async function createInstructionTurn(params: {
     instructionText,
   });
 
+  if (!turn && params.queueDirectly) {
+    return (await findReusablePendingInstructionTurn(sessionUuid, instructionText)) ??
+      createPendingTurn({ sessionUuid, trigger: "human_instruction", promptText: instructionText });
+  }
   if (!turn) {
     // Defensive: the chokepoint returns no turn only when the agent has no online origin.
     // sendInstruction re-checks `assertContinuable` immediately before, and the ad-hoc
@@ -411,7 +456,7 @@ async function assertIdeaSessionProjectAccess(
 export async function sendInstruction(
   auth: { type: string; companyUuid: string; actorUuid: string },
   params: { sessionUuid: string; instructionText: string },
-): Promise<{ turn: TurnView }> {
+): Promise<{ turn: TurnView; queued: boolean }> {
   // (1) Validate text first — a bad instruction must never create a turn.
   const instructionText = validateInstructionText(params.instructionText);
 
@@ -424,9 +469,24 @@ export async function sendInstruction(
   // (2b) Private-project isolation for idea-anchored sessions.
   const projectUuid = await assertIdeaSessionProjectAccess(auth, session);
 
-  // (3) Re-check the origin is online (read-only/409 when offline). Reuses 子1's single
-  // staleness verdict; never re-routes to another connection.
-  await assertContinuable(auth.companyUuid, params.sessionUuid);
+  // (2c) D4 lazy check: an expired CLI lease is released (and its queue drained) first, so
+  // the send below sees the true lease state.
+  const now = new Date();
+  await drainExpiredCliLeases(auth.companyUuid, [session], now);
+
+  // (3) Re-check the session is continuable: not-continuable / unbound are refused with
+  // distinct reasons, then the origin must be online (read-only/409 when offline). Reuses
+  // 子1's single staleness verdict; never re-routes to another connection.
+  // While a terminal holds the lease the send is QUEUED until CLI exit, so the origin's
+  // current online-ness does not matter (reconnect backfill delivers it later) — only the
+  // unbound / not-continuable refusals apply.
+  const leasedAtSend = isCliLeased(session, now);
+  if (leasedAtSend) {
+    if (session.continuable === false) throw new SessionNotContinuableError();
+    if (session.originConnectionUuid == null) throw new SessionUnboundError();
+  } else {
+    await assertContinuable(auth.companyUuid, params.sessionUuid);
+  }
 
   // (4) Create the turn on THIS session via the chokepoint, session-key aligned.
   const turn = await createInstructionTurn({
@@ -437,19 +497,40 @@ export async function sendInstruction(
     directIdeaUuid: session.directIdeaUuid,
     projectUuid,
     instructionText,
+    keyOnSessionId: keysOnOwnSessionId(session),
+    queueDirectly: leasedAtSend,
   });
 
-  // (5) Origin-only live delivery: ping ONLY the session's origin connection so the live
+  // (5) isCliLeased gate: while a foreground CLI holds the conversation the turn is QUEUED —
+  // stored `pending`, no wake emitted. It is delivered by the D4 drain on release/expiry.
+  const queued = await isSessionCliLeased(auth.companyUuid, params.sessionUuid);
+  if (queued) return { turn, queued: true };
+
+  // (6) Origin-only live delivery: ping ONLY the session's origin connection so the live
   // wake reaches that one daemon and never another connection of the same agent, carrying
   // the PRECISE turnUuid so it runs ONLY this turn. Fire-and-forget + non-fatal — the
-  // persisted turn + reconnect-backfill are the durability net.
+  // persisted turn + reconnect-backfill are the durability net. (assertContinuable proved
+  // the origin is bound and online.)
   deliverTurnPing({
     companyUuid: auth.companyUuid,
-    originConnectionUuid: session.originConnectionUuid,
+    originConnectionUuid: session.originConnectionUuid as string,
     turnUuid: turn.uuid,
+    ...(session.cliHost != null && session.runtimeCwd ? { runtimeCwd: session.runtimeCwd } : {}),
   });
 
-  return { turn };
+  return { turn, queued: false };
+}
+
+/**
+ * Re-read the lease AFTER the turn is persisted (a CLI registering/renewing concurrently
+ * with the send must still win the gate): the single `isCliLeased` predicate decides.
+ */
+async function isSessionCliLeased(companyUuid: string, sessionUuid: string): Promise<boolean> {
+  const lease = await prisma.daemonSession.findFirst({
+    where: { uuid: sessionUuid, companyUuid },
+    select: { cliLeaseHolder: true, cliLeaseExpiresAt: true },
+  });
+  return lease != null && isCliLeased(lease);
 }
 
 // ===== Ad-hoc create-and-send =====
@@ -874,6 +955,9 @@ export async function createConversationalIdeaSession(
     directIdeaUuid: sessionRow.directIdeaUuid,
     originConnectionUuid: sessionRow.originConnectionUuid,
     runtimeCwd: sessionRow.runtimeCwd,
+    cli: null,
+    originBound: sessionRow.originConnectionUuid != null,
+    continuable: sessionRow.continuable,
     status: sessionRow.status,
     title: sessionRow.title,
     lastTurnAt: sessionRow.lastTurnAt.toISOString(),
@@ -994,6 +1078,12 @@ export async function repointSessionOriginAndSend(
   // (2b) Private-project isolation for idea-anchored sessions (before any write).
   const projectUuid = await assertIdeaSessionProjectAccess(auth, session);
 
+  // (2c) cli-agent-session-sync: a not-continuable or unbound CLI session cannot be rescued
+  // by re-pointing (its resume identity / cwd binding is the whole point) — refuse with the
+  // same distinct reasons as a send.
+  if (session.continuable === false) throw new SessionNotContinuableError();
+  if (session.originConnectionUuid == null) throw new SessionUnboundError();
+
   // (3) The CURRENT origin must be OFFLINE — re-point is only for a read-only session. A live
   // origin has no dead-end to route around, so refuse (409) rather than orphan a running run.
   const currentOriginLive = await isConnectionLive(
@@ -1041,16 +1131,20 @@ export async function repointSessionOriginAndSend(
     directIdeaUuid: session.directIdeaUuid,
     projectUuid,
     instructionText,
+    keyOnSessionId: keysOnOwnSessionId(session),
   });
 
   // (7) Origin-only live delivery: ping ONLY the NEW origin connection (verified online in
   // (4)), carrying the PRECISE turnUuid so it runs ONLY this turn. Fire-and-forget +
-  // non-fatal — the persisted turn + reconnect-backfill are the durability net.
-  deliverTurnPing({
-    companyUuid: auth.companyUuid,
-    originConnectionUuid: params.connectionUuid,
-    turnUuid: turn.uuid,
-  });
+  // non-fatal — the persisted turn + reconnect-backfill are the durability net. Gated by
+  // isCliLeased: a session still held by a terminal keeps the turn queued.
+  if (!(await isSessionCliLeased(auth.companyUuid, params.sessionUuid))) {
+    deliverTurnPing({
+      companyUuid: auth.companyUuid,
+      originConnectionUuid: params.connectionUuid,
+      turnUuid: turn.uuid,
+    });
+  }
 
   // Read back the re-pointed session so the caller (the UI) sees the new origin reflected —
   // the SAME session uuid/sessionId, now pointing at the online connection. Mapped to the
@@ -1075,6 +1169,9 @@ export async function repointSessionOriginAndSend(
     directIdeaUuid: updated.directIdeaUuid,
     originConnectionUuid: updated.originConnectionUuid,
     runtimeCwd: updated.runtimeCwd,
+    cli: toCliSessionView(updated),
+    originBound: updated.originConnectionUuid != null,
+    continuable: updated.continuable,
     status: updated.status,
     title: updated.title,
     lastTurnAt: updated.lastTurnAt.toISOString(),
@@ -1173,7 +1270,10 @@ async function enrichSessions(
 ): Promise<SessionTargetView[]> {
   if (sessions.length === 0) return [];
 
-  const connectionUuids = [...new Set(sessions.map((s) => s.originConnectionUuid))];
+  // Unbound (null-origin) CLI sessions have no connection to resolve → never online.
+  const connectionUuids = [
+    ...new Set(sessions.map((s) => s.originConnectionUuid).filter((u): u is string => u != null)),
+  ];
   const connections = await prisma.daemonConnection.findMany({
     where: { companyUuid: auth.companyUuid, uuid: { in: connectionUuids } },
     select: { uuid: true, status: true, lastSeenAt: true },
@@ -1213,7 +1313,7 @@ async function enrichSessions(
 
   return sessions.map((s) => ({
     ...s,
-    originOnline: onlineConnectionUuids.has(s.originConnectionUuid),
+    originOnline: s.originConnectionUuid != null && onlineConnectionUuids.has(s.originConnectionUuid),
     firstInstruction: firstInstructionBySession.get(s.uuid) ?? null,
     ideaTitle: s.directIdeaUuid ? ideaTitleByUuid.get(s.directIdeaUuid) ?? null : null,
   }));

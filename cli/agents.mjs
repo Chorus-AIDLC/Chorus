@@ -70,7 +70,8 @@ USAGE
   chorus agents run --name <n> [--type <t>] -- [args…]
                                     Launch an agent's binary in the foreground with its
                                     Chorus connection injected; args after \`--\` pass
-                                    through verbatim (see \`chorus agents run --help\`)
+                                    through verbatim; synced as a Chorus session unless
+                                    --no-sync (see \`chorus agents run --help\`)
   chorus agents remove <name|uuid>  Remove a configured agent from ~/.chorus/daemon.json
 
 Each listed UUID or name is a valid value for \`chorus mcp --agent <name|uuid>\` or the

@@ -34,32 +34,56 @@ export function conversationNameFromInstruction(
 }
 
 /**
- * Batch-resolve each session's OPENING human-instruction text, keyed by `sessionUuid`.
- * One query for any number of sessions: the earliest (`seq` asc) `human_instruction`
- * turn per session with a non-null body wins (first-seen-per-session in the ordered
- * result). Sessions with no such turn are simply absent from the map. Used by both the
- * targeting list and the execution enrichment so the "name a conversation by its first
- * message" rule is single-sourced. A READ that does NOT swallow — a query failure
- * propagates.
+ * Batch-resolve each session's OPENING human text, keyed by `sessionUuid`.
+ * One query for any number of sessions: the earliest (`seq` asc) turn per session that
+ * carries human text wins — a `human_instruction` turn's non-null body, or (CLI session
+ * sync) a terminal-started `cli_session` turn's first synced `user` transcript message,
+ * so a conversation begun in the terminal is named by what the human typed there rather
+ * than by a later Chorus instruction or the generic id label. Sessions with neither are
+ * simply absent from the map. Used by both the targeting list and the execution
+ * enrichment so the "name a conversation by its first message" rule is single-sourced.
+ * A READ that does NOT swallow — a query failure propagates.
  */
 export async function getFirstInstructionBySessionUuid(
   sessionUuids: string[],
 ): Promise<Map<string, string>> {
   const byUuid = new Map<string, string>();
   if (sessionUuids.length === 0) return byUuid;
-  const turns = await prisma.daemonSessionTurn.findMany({
+  const turns: Array<{
+    sessionUuid: string;
+    promptText: string | null;
+    seq: number;
+    trigger?: string;
+    messages?: Array<{ text: string }>;
+  }> = await prisma.daemonSessionTurn.findMany({
     where: {
       sessionUuid: { in: sessionUuids },
-      trigger: "human_instruction",
-      promptText: { not: null },
+      OR: [
+        { trigger: "human_instruction", promptText: { not: null } },
+        { trigger: "cli_session" },
+      ],
     },
-    select: { sessionUuid: true, promptText: true, seq: true },
+    select: {
+      sessionUuid: true,
+      promptText: true,
+      seq: true,
+      trigger: true,
+      messages: {
+        where: { role: "user" },
+        orderBy: { seq: "asc" },
+        take: 1,
+        select: { text: true },
+      },
+    },
     orderBy: [{ sessionUuid: "asc" }, { seq: "asc" }],
   });
   for (const turn of turns) {
-    if (!byUuid.has(turn.sessionUuid) && turn.promptText) {
-      byUuid.set(turn.sessionUuid, turn.promptText);
-    }
+    if (byUuid.has(turn.sessionUuid)) continue;
+    const text =
+      turn.trigger === "cli_session"
+        ? turn.messages?.[0]?.text?.trim()
+        : turn.promptText;
+    if (text) byUuid.set(turn.sessionUuid, text);
   }
   return byUuid;
 }

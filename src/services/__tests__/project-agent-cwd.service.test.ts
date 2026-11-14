@@ -32,6 +32,10 @@ const mockCreateActivityInTx = vi.hoisted(() => vi.fn(async () => ({ activity: {
 vi.mock("@/services/activity.service", () => ({ createActivityInTx: mockCreateActivityInTx }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: prismaMock }));
+const mockBindCli = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => 0));
+vi.mock("@/services/daemon-cli-session.service", () => ({
+  bindUnboundCliSessionsForConnection: (...args: unknown[]) => mockBindCli(...args),
+}));
 vi.mock("@/lib/event-bus", () => ({
   eventBus: { emit: (...args: unknown[]) => emit(...args) },
   controlEventName: (uuid: string) => `control:${uuid}`,
@@ -457,6 +461,20 @@ describe("project-agent cwd request service", () => {
         status: "pending",
       },
     });
+  });
+
+  it("schedules CLI session binding after a successful validate report (D5 discovered dir)", async () => {
+    prismaMock.daemonDirectoryRequest.findFirst.mockResolvedValue({
+      uuid: "validate-1", operation: "validate", status: "pending", deadlineAt: new Date(Date.now() + 15_000),
+    });
+    prismaMock.daemonDirectoryRequest.update.mockResolvedValue({ uuid: "validate-1", status: "success" });
+    await completeDirectoryRequest({
+      companyUuid: "company-1", agentUuid: "agent-1", connectionUuid: "conn-1", requestUuid: "validate-1",
+      status: "success", result: { items: [], normalizedPath: "/home/u/repo" },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mockBindCli).toHaveBeenCalledWith("company-1", "conn-1");
   });
 
   it("terminalizes a malformed successful roots report as INTERNAL_ERROR", async () => {

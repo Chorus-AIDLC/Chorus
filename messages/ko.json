@@ -2050,7 +2050,17 @@
     "detailHost": "호스트",
     "detailStarted": "시작 시각",
     "copySessionId": "세션 ID 복사",
-    "sessionIdCopied": "복사됨!"
+    "sessionIdCopied": "복사됨!",
+    "triggerCliSession": "터미널",
+    "runningInTerminal": "터미널에서 실행 중",
+    "statusInTerminal": "터미널",
+    "turnStatusInTerminal": "터미널",
+    "turnCliSessionNote": "터미널에서 실행 중입니다. 출력은 동기화되는 대로 여기에 표시됩니다.",
+    "turnQueuedForTerminal": "대기 중 — 터미널 세션이 끝나면 전달됩니다",
+    "turnNotContinuableNote": "전달되지 않음 — 이 대화는 Chorus에서 이어갈 수 없습니다.",
+    "sendQueuedNote": "터미널에서 실행 중 — 지금 보내는 메시지는 대기열에 들어가 터미널 세션이 끝나면 전달됩니다.",
+    "sendUnboundNote": "이 대화의 원래 머신과 디렉터리에서 이 에이전트의 Chorus 데몬이 실행되고 있지 않습니다. 이어가려면 그곳에서 데몬을 시작하세요.",
+    "sendNotContinuableNote": "이 대화는 Chorus에서 이어갈 수 없습니다 — 터미널에서 시작할 때 에이전트 세션을 식별하지 못했습니다."
   },
   "agentPresence": {
     "online": "온라인",

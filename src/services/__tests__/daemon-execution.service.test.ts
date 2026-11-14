@@ -494,9 +494,10 @@ describe("getVisibleExecutions", () => {
     const result = await getVisibleExecutions({ type: "user", companyUuid, actorUuid: ownerUuid });
     expect(result[0].entityTitle).toBe("Refactor the uploader");
     expect(result[0].projectUuid).toBeNull();
-    // The turn query filtered to human_instruction with a non-null body.
+    // The turn query filtered to human_instruction with a non-null body (or a
+    // terminal-started cli_session turn, named by its first synced user message).
     const turnWhere = mockPrisma.daemonSessionTurn.findMany.mock.calls[0][0].where;
-    expect(turnWhere.trigger).toBe("human_instruction");
+    expect(turnWhere.OR).toContainEqual({ trigger: "human_instruction", promptText: { not: null } });
   });
 
   it("a daemon_session with no title AND no instruction degrades to an empty title", async () => {

@@ -4,7 +4,7 @@ description: Chorus AI Agent collaboration platform — overview, common tools, 
 license: AGPL-3.0
 metadata:
   author: chorus
-  version: "0.17.4"
+  version: "0.17.5"
   category: project-management
   mcp_server: chorus
 ---
@@ -444,6 +444,17 @@ The table below shows default tool availability for each preset (no custom permi
 > - **macOS (launchd):** `launchctl setenv ANTHROPIC_API_KEY …` (before load), or add an `EnvironmentVariables` dict to `~/Library/LaunchAgents/com.chorus.daemon.plist`.
 >
 > Without this, a boot-started daemon reaches Chorus fine but its spawned agents may fail to reach the model provider.
+
+### 6. Interactive runs via `chorus agents run` (session sync)
+
+`chorus agents run --name <name|uuid> [--type <type>] [--idea <uuid>] [--no-sync] [--] [agent args…]` launches a configured agent's own CLI in the foreground with that agent's Chorus connection injected into the child only (the API key is never printed). Everything after `--` is passed to the agent verbatim.
+
+- **Session sync is on by default.** The run is registered as a Chorus daemon conversation for that agent. Its user/assistant text (no tool calls or thinking) appears live in Chorus (Kiro uploads it on exit).
+- **Messages from Chorus are queued while the terminal run is active.** The conversation shows "Running in terminal"; nothing is injected into the TUI. When the run exits (or dies — the server lease expires within about 60 s), the local `chorus daemon` serving the **same machine and directory** resumes the SAME backend conversation and answers the queued messages.
+- **No daemon there yet?** You get one warning line at launch. The session becomes continuable once a daemon starts in that directory.
+- `--idea <uuid>` anchors the conversation to an Idea (default: ad-hoc). `--no-sync` registers nothing — the plain foreground launch.
+- Claude Code / Pi get a derived session id injected. If you pass your own session flag after `--` (e.g. `--session-id`, `--resume`, `--continue`), the run stays visible but is not continuable. Codex / TRAE / Kiro ids are discovered after launch. opencode / openclaw / dsh runs are visible only.
+- Sync never blocks the agent: problems print at most one warning line, and details go to `~/.chorus/logs/cli-session-sync.log`.
 
 ---
 

@@ -87,6 +87,9 @@ const CONN_ORIGIN = "conn-origin";
 
 function session(over: Partial<SessionView> = {}): SessionView {
   return {
+    cli: null,
+    originBound: true,
+    continuable: true,
     uuid: "sess-uuid-1",
     agentUuid: "agent-1",
     sessionId: IDEA,

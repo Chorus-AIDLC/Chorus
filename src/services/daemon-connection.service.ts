@@ -670,6 +670,7 @@ export async function registerConnection(
           data: refreshData,
           select: { uuid: true, connectedAt: true },
         });
+        scheduleCliSessionBinding(companyUuid, row.uuid);
         return { uuid: row.uuid, connectedAt: row.connectedAt };
       }
 
@@ -677,6 +678,7 @@ export async function registerConnection(
         data: createData,
         select: { uuid: true, connectedAt: true },
       });
+      scheduleCliSessionBinding(companyUuid, row.uuid);
       return { uuid: row.uuid, connectedAt: row.connectedAt };
     }
 
@@ -732,6 +734,7 @@ export async function registerConnection(
           );
         });
     }
+    scheduleCliSessionBinding(companyUuid, row.uuid);
     return { uuid: row.uuid, connectedAt: row.connectedAt };
   } catch (err) {
     logger.error(
@@ -740,6 +743,22 @@ export async function registerConnection(
     );
     return null;
   }
+}
+
+/**
+ * cli-agent-session-sync D5: after a connection (re)registers, bind any unbound CLI session
+ * of the same agent + host whose launch cwd it serves. Fire-and-forget + lazily imported
+ * (like the orphan reconcile above): registration must never fail, slow, or cycle on the
+ * session services.
+ */
+export function scheduleCliSessionBinding(companyUuid: string, connectionUuid: string): void {
+  void import("@/services/daemon-cli-session.service")
+    .then(({ bindUnboundCliSessionsForConnection }) =>
+      bindUnboundCliSessionsForConnection(companyUuid, connectionUuid),
+    )
+    .catch((err) => {
+      logger.error({ err, companyUuid, connectionUuid }, "CLI session binding failed to dispatch");
+    });
 }
 
 /**

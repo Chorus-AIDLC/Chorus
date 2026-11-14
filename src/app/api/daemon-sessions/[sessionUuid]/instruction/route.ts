@@ -15,9 +15,13 @@
 
 import { NextRequest } from "next/server";
 import { withErrorHandler } from "@/lib/api-handler";
-import { success, errors } from "@/lib/api-response";
+import { success, errors, error, ErrorCode } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
-import { SessionReadOnlyError } from "@/services/daemon-session.service";
+import {
+  SessionNotContinuableError,
+  SessionReadOnlyError,
+  SessionUnboundError,
+} from "@/services/daemon-session.service";
 import {
   sendInstruction,
   SessionNotVisibleError,
@@ -52,8 +56,10 @@ export const POST = withErrorHandler<{ sessionUuid: string }>(
     }
 
     try {
-      const { turn } = await sendInstruction(auth, { sessionUuid, instructionText });
-      return success({ turn });
+      // `queued: true` = the session is held by a foreground CLI run (live lease): the turn
+      // is stored pending and delivered when the terminal session releases/expires.
+      const { turn, queued } = await sendInstruction(auth, { sessionUuid, instructionText });
+      return success({ turn, queued });
     } catch (err) {
       // not-visible → 404 (never confirm the session exists for another owner).
       if (err instanceof SessionNotVisibleError) {
@@ -63,6 +69,11 @@ export const POST = withErrorHandler<{ sessionUuid: string }>(
       // routed to another connection of the same agent).
       if (err instanceof SessionReadOnlyError) {
         return errors.conflict(err.message);
+      }
+      // cli-agent-session-sync: distinct 409 reasons (error.details.reason) so the composer
+      // explains why Send is unavailable — no daemon bound yet vs. never resumable.
+      if (err instanceof SessionUnboundError || err instanceof SessionNotContinuableError) {
+        return error(ErrorCode.CONFLICT, err.message, { reason: err.code });
       }
       // empty / over-length text → 400 (no turn was created).
       if (err instanceof InstructionTextError) {

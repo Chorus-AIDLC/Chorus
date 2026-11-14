@@ -20,8 +20,9 @@
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { withErrorHandler } from "@/lib/api-handler";
-import { success, errors } from "@/lib/api-response";
+import { success, errors, error, ErrorCode } from "@/lib/api-response";
 import { getAuthContext } from "@/lib/auth";
+import { SessionNotContinuableError, SessionUnboundError } from "@/services/daemon-session.service";
 import {
   repointSessionOriginAndSend,
   SessionNotVisibleError,
@@ -81,6 +82,9 @@ export const POST = withErrorHandler<{ sessionUuid: string }>(
         return errors.notFound("Daemon session");
       }
       // current origin still online (nothing to rescue) → 409; never re-point a live session.
+      if (err instanceof SessionUnboundError || err instanceof SessionNotContinuableError) {
+        return error(ErrorCode.CONFLICT, err.message, { reason: err.code });
+      }
       if (err instanceof RepointOriginLiveError) {
         return errors.conflict(err.message);
       }

@@ -47,3 +47,16 @@ export function getSessionId(anchor, deps = {}) {
 export function setSessionId(anchor, sessionId, deps = {}) {
   map.set(anchor, sessionId, deps);
 }
+
+/** Every `anchor → sessionId` entry (string values only). Never throws. */
+export function getAllSessionIds(deps = {}) {
+  return map.entries(deps);
+}
+
+/** Delete `anchor` only while it still maps to `expectedSessionId`. Never throws. */
+export function removeSessionId(anchor, expectedSessionId, deps = {}) {
+  map.remove(anchor, expectedSessionId, deps);
+}
+
+/** The underlying generic map (session-sync adapters take it as a dependency). */
+export const kiroSessionMap = map;

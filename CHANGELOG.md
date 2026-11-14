@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.24.1] - 2026-11-14
+
+### Added
+
+- **Terminal session sync**: `chorus agents run` now syncs its run to Chorus by default — the live transcript streams into the agent's conversation, the UI marks the session "Running in terminal", and messages sent from Chorus while the terminal run is active are queued and delivered when it exits, with the local daemon resuming the same conversation on the same machine and directory. Per-backend adapters cover Claude Code, Pi, Codex/TRAE and Kiro; `--idea <uuid>` anchors a run to an Idea and `--no-sync` opts out. (#655)
+
+### Fixed
+
+- **Hermes wake admission**: Hermes `>= 0.22.1` admits non-empty event metadata only for the WhatsApp adapter, so every Chorus wake was refused with `invalid_params (metadata)` before reaching a model turn. Wake events now carry no metadata, and the turn and its wake label are resolved from adapter state. (#653, #654)
+- **Codex resume after a terminal run**: Codex holds the thread writer lock for about a minute after its interactive TUI exits, which interrupted the queued Chorus instruction. The resume of the same thread is now retried within a bounded window instead of falling back to a new thread. (#655)
+- **Terminal conversation names**: A conversation started from the terminal is now named after the first message typed there, instead of showing a generic id label or a later queued instruction. (#655)
+
+### Plugin
+
+- **Versions**: Upgraded all seven plugins and four coordinated npm packages to `0.24.1`.
+- **Session sync documentation**: The `chorus-cli` skill on every surface explains the default-on session sync, queued Chorus messages, same-conversation resume on exit or lease expiry, `--idea` anchoring, `--no-sync`, and per-backend continuability.
+
+---
+
 ## [0.24.0] - 2026-11-05
 
 ### Added

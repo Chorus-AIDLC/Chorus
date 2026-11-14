@@ -186,6 +186,10 @@ export function snapshotSessions(cwd, deps = {}) {
  *   into the child env for plugin hooks, shell tooling, and MCP authentication.
  * @property {NodeJS.Platform} [platform]  Injectable for tests; gates POSIX `detached`.
  * @property {(anchor: string) => string|null} [getSessionIdFn]  Injectable session-map read.
+ * @property {(o: { agentUuid: string, anchor: string, sessionKey: string, sessionId: string, cwd: string, dir: string }) => boolean} [verifySessionOwnershipFn]
+ *   Gate for resuming a mapped session (default: refuse all).
+ * @property {(o: { sessionId: string, agentUuid: string, anchor: string, sessionKey: string, cwd: string }) => void} [recordSessionOwnershipFn]
+ *   Refreshes the ownership record after a run on an owned session.
  * @property {(o: {sessionId: string, cwd: string, onMessage?: Function, stdout: string, logger: any}) => void} [reconstructTranscript]
  *   Injectable transcript reconstruction (task 4) — invoked post-run; a no-op if absent.
  */
@@ -205,7 +209,13 @@ export class KiroSpawner {
     this.cliConfig = validateAgentCliConfig(opts.cliConfig, "kiro", opts.label);
     this.env = overlayAgentEnv(opts.env ?? process.env, this.cliConfig.env, this.platform);
     this.getSessionIdFn = opts.getSessionIdFn ?? defaultGetSessionId;
+    // Ownership gate for mapped sessions. The safe default refuses every mapped
+    // session; the daemon's production construction (spawner-select.mjs) injects the
+    // real record-backed verifier from kiro-session-ownership.mjs.
     this.verifySessionOwnershipFn = opts.verifySessionOwnershipFn ?? (() => false);
+    // Refresh the ownership record of a session this daemon just ran (resumed) so
+    // daemon-continued sessions stay provably owned. No-op unless injected.
+    this.recordSessionOwnershipFn = opts.recordSessionOwnershipFn ?? null;
     this.resolveKiroPathFn = opts.resolveKiroPathFn ?? resolveKiroPath;
     // Post-run transcript reconstruction from Kiro's on-disk session store (task 4).
     // Defaults to the real reader; injectable/nullable for tests.
@@ -354,6 +364,13 @@ export class KiroSpawner {
         }
 
         const observedSessionId = knownSessionId;
+        if (observedSessionId && this.recordSessionOwnershipFn) {
+          try {
+            this.recordSessionOwnershipFn({ sessionId: observedSessionId, agentUuid: this.creds?.agentUuid, anchor, sessionKey, cwd: runCwd });
+          } catch (err) {
+            this.logger.warn(`[Chorus] Kiro session ownership refresh failed (ignored): ${err}`);
+          }
+        }
 
         // Transcript reconstruction (task 4) — post-run, best-effort. Runs even
         // when no sessionId was captured: `kiro-cli chat --no-interactive` does NOT

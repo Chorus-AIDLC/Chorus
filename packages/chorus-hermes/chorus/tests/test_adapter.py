@@ -184,6 +184,7 @@ class Harness:
             sse_options={"sleep": self._sleep, "host": "box"})
         self.rejected = []
         self.handled = []
+        self.wake_labels = []  # the adapter-side wake label of each handled event, read at handle time
         self.reply = "final answer"
         self.gate: Optional[asyncio.Event] = None
         self.raise_exc: Optional[Exception] = None
@@ -198,6 +199,8 @@ class Harness:
             self.rejected.append(event)
             return None
         self.handled.append(event)
+        turn = self.adapter._turn_for_event(event)
+        self.wake_labels.append(turn.wake.label if turn else None)
         if self.gate is not None:
             await self.gate.wait()
         if self.raise_exc is not None:
@@ -313,6 +316,9 @@ def test_wake_runs_with_owner_user_id_without_allowlist_env(hermes, tmp_path):
     assert event.source.user_id == "owner-1" and event.source.chat_id == "idea:i-1"
     assert event.allow_gateway_control is False
     assert event.text.startswith("[Headless daemon session]")
+    # Hermes >= 0.22.1 native admission refuses non-empty plugin metadata (#653).
+    assert event.metadata == {}
+    assert h.wake_labels == ["n-1"]
 
 
 def test_env_allowlist_without_owner_rejects(hermes, tmp_path):

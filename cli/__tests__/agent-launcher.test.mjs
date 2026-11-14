@@ -79,6 +79,8 @@ function opts({ agents = [AGENT], env = {}, spawnBehavior = {}, isFile = () => t
       spawnImpl: spawn,
       isFile,
       cwd: "/work",
+      // Historical-launch assertions run unsynced (≡ --no-sync); sync has its own tests.
+      sessionSync: false,
     },
   };
 }

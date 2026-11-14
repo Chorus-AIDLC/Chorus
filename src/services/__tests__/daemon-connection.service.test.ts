@@ -45,12 +45,18 @@ const mockReconcileOrphanTurns = vi.hoisted(() => vi.fn(async (..._args: unknown
 vi.mock("@/services/daemon-session.service", () => ({
   reconcileOrphanTurns: (...args: unknown[]) => mockReconcileOrphanTurns(...args),
 }));
+// cli-agent-session-sync D5: registration lazily schedules unbound CLI session binding.
+const mockBindCli = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => 0));
+vi.mock("@/services/daemon-cli-session.service", () => ({
+  bindUnboundCliSessionsForConnection: (...args: unknown[]) => mockBindCli(...args),
+}));
 
 import {
   DAEMON_CLIENT_TYPES,
   STALE_THRESHOLD_MS,
   parseSelfReport,
   registerConnection as registerConnectionRaw,
+  scheduleCliSessionBinding,
   isConnectionConflict,
   markDisconnected,
   touchConnection,
@@ -348,6 +354,24 @@ describe("registerConnection", () => {
         expect(mockReconcileOrphanTurns).toHaveBeenCalledWith(companyUuid, connectionUuid, {
           force: true,
         });
+      });
+
+      it("schedules unbound CLI session binding for the registered connection", async () => {
+        mockPrisma.daemonConnection.findFirst.mockResolvedValue(null);
+        mockPrisma.daemonConnection.upsert.mockResolvedValue({ uuid: connectionUuid, connectedAt });
+        await registerConnection(companyUuid, agentUuid, report);
+        await flush();
+        expect(mockBindCli).toHaveBeenCalledWith(companyUuid, connectionUuid);
+      });
+
+      it("logs (never throws) when the CLI binding dispatch fails", async () => {
+        mockBindCli.mockRejectedValueOnce(new Error("bind boom"));
+        scheduleCliSessionBinding(companyUuid, connectionUuid);
+        await flush();
+        expect(mockLogger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ connectionUuid }),
+          "CLI session binding failed to dispatch",
+        );
       });
 
       it("does NOT fire for the SAME startedAt (same process reconnecting after a transient drop)", async () => {

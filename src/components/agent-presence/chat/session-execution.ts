@@ -110,12 +110,12 @@ export function executionsForSession(
 // a cross-connection match still stops the correct subprocess.
 export function sessionExecutionsForComposer(
   executionsByConnection: Record<string, ExecutionView[]>,
-  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string; agentUuid: string },
+  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string | null; agentUuid: string },
 ): ExecutionView[] {
   const anchor = parseSessionAnchor(session.sessionId, session.directIdeaUuid);
   const scoped = anchor.kind === "task" || anchor.kind === "review";
   const matchesAgent = (execution: ExecutionView) => !scoped || execution.agentUuid === session.agentUuid;
-  const ownSlice = (executionsByConnection[session.originConnectionUuid] ?? []).filter(matchesAgent);
+  const ownSlice = (session.originConnectionUuid ? executionsByConnection[session.originConnectionUuid] ?? [] : []).filter(matchesAgent);
   const matched = executionsForSession(ownSlice, session);
   if (matched.length > 0) return matched;
   const allExecutions = Object.values(executionsByConnection).flat().filter(matchesAgent);
@@ -153,7 +153,7 @@ export function sessionExecStatus(
 // executions to one status" — the match rule and the reduce rule each live in one place.
 export function sessionExecStatusForRow(
   executionsByConnection: Record<string, ExecutionView[]>,
-  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string; agentUuid: string },
+  session: { sessionId: string; directIdeaUuid: string | null; originConnectionUuid: string | null; agentUuid: string },
 ): SessionExecStatus {
   const execs = sessionExecutionsForComposer(executionsByConnection, session);
   return sessionExecStatus(execs, session);

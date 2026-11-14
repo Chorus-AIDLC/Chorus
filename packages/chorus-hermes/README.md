@@ -480,6 +480,20 @@ relative to the Hermes checkout.
   `~/.hermes/plugins/chorus` and `~/.hermes/plugins/chorus-mcp`.
 - Also accepted: `<url>#<subdir>` and `<url>.git/<subdir>` (`plugins_cmd.py:297-304`).
 
+### 7. Can a plugin platform put its own keys on `MessageEvent.metadata`? — No (Hermes ≥ 0.22.1)
+
+- Since Hermes commit `298a96d5` (2026-10-11; first tagged in Hermes v0.22.1, so also
+  v0.23.0), native admission in `gateway/session_envelope.py::_native_metadata`
+  admits non-empty event `metadata` only for the WhatsApp adapter's closed key
+  set. Any other non-empty `metadata` makes the gateway refuse the whole event
+  before a model turn: `Native admission refused: invalid_params (metadata)`.
+  The gateway then sends a short refusal text, so the turn just ends. The agent
+  still shows online (#653).
+- The adapter therefore builds wake events with **empty** `metadata`. The wake and
+  its turn stay in adapter state (`_active`, keyed by `source.chat_id`), and
+  `_turn_for_event` resolves the turn from `event.source.chat_id`.
+  `raw_message` carries the original Chorus notification.
+
 ### Resolve-then-install run (local repo)
 
 `packages/chorus-hermes` is not on GitHub yet, so the SHA flow was exercised
