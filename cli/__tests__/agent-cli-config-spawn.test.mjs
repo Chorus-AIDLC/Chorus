@@ -242,7 +242,7 @@ describe("actual daemon spawn customization", () => {
 
 function launchOpts(file, overrides = {}) {
   return { env: { PATH: "/base", CHORUS_DAEMON_HEADLESS: "1", CLAUDECODE: "nested" }, loginPath: "/config", settingsPath: "/settings", readJson: (p) => p === "/config" ? file : null,
-    platform: "linux", isFile: () => true, spawnImpl: fakeSpawn("foreground"), stdout: { write() {} }, stderr: { write() {} }, ...overrides };
+    platform: "linux", isFile: () => true, spawnImpl: fakeSpawn("foreground"), stdout: { write() {} }, stderr: { write() {} }, sessionSync: false, ...overrides };
 }
 describe("actual foreground launches", () => {
   it.each([

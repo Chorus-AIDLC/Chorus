@@ -22,7 +22,13 @@ vi.mock("@/services/daemon-session.service", () => {
       this.originConnectionUuid = originConnectionUuid;
     }
   }
-  return { SessionReadOnlyError };
+  class SessionUnboundError extends Error {
+    readonly code = "session_unbound";
+  }
+  class SessionNotContinuableError extends Error {
+    readonly code = "session_not_continuable";
+  }
+  return { SessionReadOnlyError, SessionUnboundError, SessionNotContinuableError };
 });
 
 vi.mock("@/services/daemon-instruction.service", () => {
@@ -50,7 +56,11 @@ vi.mock("@/services/daemon-instruction.service", () => {
 });
 
 import { POST } from "@/app/api/daemon-sessions/[sessionUuid]/instruction/route";
-import { SessionReadOnlyError } from "@/services/daemon-session.service";
+import {
+  SessionNotContinuableError,
+  SessionReadOnlyError,
+  SessionUnboundError,
+} from "@/services/daemon-session.service";
 import {
   SessionNotVisibleError,
   InstructionTextError,
@@ -140,6 +150,25 @@ describe("POST /api/daemon-sessions/{sessionUuid}/instruction", () => {
     const body = await res.json();
     expect(res.status).toBe(409);
     expect(body.error.code).toBe("CONFLICT");
+  });
+
+  it("409 with distinct reasons for an unbound vs a not-continuable CLI session", async () => {
+    mockSendInstruction.mockRejectedValue(new SessionUnboundError());
+    const res = await POST(postRequest({ instructionText: "go" }), ctx);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.details).toEqual({ reason: "session_unbound" });
+
+    mockSendInstruction.mockRejectedValue(new SessionNotContinuableError());
+    const res2 = await POST(postRequest({ instructionText: "go" }), ctx);
+    expect(res2.status).toBe(409);
+    expect((await res2.json()).error.details).toEqual({ reason: "session_not_continuable" });
+  });
+
+  it("surfaces queued=true when the session is held by a CLI lease", async () => {
+    mockSendInstruction.mockResolvedValue({ turn, queued: true });
+    const res = await POST(postRequest({ instructionText: "go" }), ctx);
+    expect(res.status).toBe(200);
+    expect((await res.json()).data).toEqual({ turn, queued: true });
   });
 
   it("400 when the instruction text is empty/over-length (service InstructionTextError)", async () => {

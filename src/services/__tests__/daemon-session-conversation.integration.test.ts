@@ -338,6 +338,7 @@ function buildPrismaFake(store: Store) {
           title: null,
           backendSessionId: null,
           directIdeaUuid: null,
+          continuable: true, // DB default (cli-agent-session-sync)
           lastTurnAt: now,
           createdAt: now,
           updatedAt: now,

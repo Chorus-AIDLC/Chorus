@@ -30,7 +30,17 @@
 import { useMemo, useState } from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
-import { Loader2, MessageCirclePlus, Radio, SendHorizonal, WifiOff } from "lucide-react";
+import {
+  Ban,
+  Loader2,
+  MessageCirclePlus,
+  Radio,
+  SendHorizonal,
+  SquareTerminal,
+  Unplug,
+  WifiOff,
+  type LucideIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -50,6 +60,11 @@ import { ConversationExecutionControl } from "./conversation-execution-control";
 import { InstancePicker, type InstanceCandidate } from "./instance-picker";
 import type { ConnectionView, ExecutionView } from "./types";
 import type { SessionView } from "@/services/daemon-session.service";
+import {
+  sendGateFromErrorReason,
+  type CliSessionFields,
+  type SendGate,
+} from "./chat/session-cli-state";
 
 // Mirror of the server-side `MAX_INSTRUCTION_CHARS` (daemon-instruction.service.ts)
 // so the UI can gate over-length text and render a truthful char counter without a
@@ -88,7 +103,7 @@ export interface SessionTarget {
   agentUuid: string;
   sessionId: string;
   directIdeaUuid: string | null;
-  originConnectionUuid: string;
+  originConnectionUuid: string | null;
   status: string;
   title: string | null;
   lastTurnAt: string;
@@ -97,6 +112,11 @@ export interface SessionTarget {
   // name) and the anchoring idea's title (idea-anchored name + badge). Both nullable.
   firstInstruction: string | null;
   ideaTitle: string | null;
+  // cli-agent-session-sync Module Contracts (optional: optimistic rows built client-side
+  // omit them until the next list re-sync).
+  cli?: CliSessionFields["cli"];
+  originBound?: boolean;
+  continuable?: boolean;
 }
 
 // =====================================================================
@@ -126,6 +146,8 @@ function ComposeField({
   pending,
   disabled,
   disabledReason,
+  disabledReasonIcon: DisabledReasonIcon = WifiOff,
+  hint = null,
   placeholder,
   sendLabel,
   layout,
@@ -141,6 +163,12 @@ function ComposeField({
   // The localized reason shown when `disabled` — required to be visible (not just
   // a tooltip) so the gate is never silent.
   disabledReason: string | null;
+  // Glyph beside the disabled reason (WifiOff for origin-offline; the CLI-session gates
+  // use their own so unbound / not-continuable read as distinct causes).
+  disabledReasonIcon?: LucideIcon;
+  // A NON-blocking informational line above the input (e.g. "queued until the terminal
+  // session ends") — shown only while the composer is enabled.
+  hint?: string | null;
   placeholder: string;
   sendLabel: string;
   layout: "inline" | "stacked";
@@ -226,9 +254,20 @@ function ComposeField({
   // Only a hard-disabled reason (no online origin) is shown — it must be visible
   // (not just a tooltip) so the gate is never silent. It renders ABOVE the input.
   const offlineReason = disabled ? (
-    <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309] dark:text-[#E0A34E]">
-      <WifiOff className="h-3.5 w-3.5 shrink-0" aria-hidden />
+    <span
+      data-testid="compose-disabled-reason"
+      className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#B45309] dark:text-[#E0A34E]"
+    >
+      <DisabledReasonIcon className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <span className="min-w-0">{disabledReason}</span>
+    </span>
+  ) : hint ? (
+    <span
+      data-testid="compose-hint"
+      className="inline-flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground"
+    >
+      <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+      <span className="min-w-0">{hint}</span>
     </span>
   ) : null;
 
@@ -305,6 +344,7 @@ export function ConversationReplyBox({
   agentUuid,
   onlineConnections = [],
   onSessionStarted,
+  sendGate,
 }: {
   // The open conversation's uuid — replies POST to its `/instruction` endpoint.
   sessionUuid: string;
@@ -329,11 +369,27 @@ export function ConversationReplyBox({
   onlineConnections?: ConnectionView[];
   // Auto-select the freshly-started conversation after an ad-hoc start.
   onSessionStarted?: (session: SessionView) => void;
+  // cli-agent-session-sync D7: the full send gate derived by the caller from the session's
+  // `{ cli, originBound, continuable }` (see `deriveSendGate`). Omitted → derived from
+  // `originOnline` alone (the pre-CLI behaviour). `queued` keeps Send ENABLED (the server
+  // stores the turn pending while a terminal holds the lease) and shows an info hint;
+  // `unbound` / `not_continuable` disable Send with their own distinct reasons.
+  sendGate?: SendGate;
 }) {
   const t = useTranslations("agentConnections");
   const tc = useTranslations("daemonChat");
   const [value, setValue] = useState("");
   const [pending, setPending] = useState(false);
+  // A 409 `session_unbound` / `session_not_continuable` refusal (the state changed between
+  // render and send) pins the matching gate for THIS session until the caller's own gate
+  // catches up, so the composer immediately explains why Send is unavailable.
+  const [refusal, setRefusal] = useState<{ sessionUuid: string; gate: SendGate } | null>(null);
+  const callerGate: SendGate = sendGate ?? (originOnline ? "open" : "offline");
+  const gate: SendGate =
+    refusal && refusal.sessionUuid === sessionUuid && (callerGate === "open" || callerGate === "queued")
+      ? refusal.gate
+      : callerGate;
+  const sendBlocked = gate === "offline" || gate === "unbound" || gate === "not_continuable";
   // The escape-hatch ad-hoc composer is collapsed by default — it appears only
   // after the user opts in via the "Continue on an online directory" action, so
   // the offline conversation isn't crowded by a picker the user may not want.
@@ -341,8 +397,10 @@ export function ConversationReplyBox({
 
   // The origin-offline escape hatch is available only when the origin is offline
   // AND the same agent has at least one OTHER online instance to dispatch to.
+  // Only for a plain origin-offline gate: an unbound / not-continuable conversation is
+  // refused by /repoint too, so offering it there would be a dead end.
   const canContinueElsewhere =
-    !originOnline && !!agentUuid && onlineConnections.length > 0;
+    gate === "offline" && !!agentUuid && onlineConnections.length > 0;
 
   const send = async () => {
     const trimmed = value.trim();
@@ -358,7 +416,16 @@ export function ConversationReplyBox({
         body: JSON.stringify({ instructionText: trimmed }),
       });
       if (!res.ok) {
-        toast.error(await extractError(res, t("instructionError")));
+        const { message, reason } = await readInstructionError(res);
+        const refusedGate = sendGateFromErrorReason(reason);
+        if (refusedGate) {
+          setRefusal({ sessionUuid, gate: refusedGate });
+          toast.error(
+            refusedGate === "unbound" ? tc("sendUnboundNote") : tc("sendNotContinuableNote"),
+          );
+          return;
+        }
+        toast.error(message ?? t("instructionError"));
         return;
       }
       // Clearing the composer is the success signal — a success toast was tried but read
@@ -381,18 +448,26 @@ export function ConversationReplyBox({
         onChange={setValue}
         onSend={send}
         pending={pending}
-        disabled={!originOnline}
+        disabled={sendBlocked}
         // The read-only notice gains its "the stuck turn can still be cleared here" clause
         // ONLY when a stuck-turn target exists — otherwise the flat read-only copy is
         // unchanged. (The Interrupt control lives in the action group, which the `disabled`
         // origin-offline gate never covers, so the action really is reachable here.)
         disabledReason={
-          !originOnline
-            ? stuckTurnTarget
-              ? tc("originOfflineNoteStuckTurn")
-              : tc("originOfflineNote")
-            : null
+          gate === "not_continuable"
+            ? tc("sendNotContinuableNote")
+            : gate === "unbound"
+              ? tc("sendUnboundNote")
+              : gate === "offline"
+                ? stuckTurnTarget
+                  ? tc("originOfflineNoteStuckTurn")
+                  : tc("originOfflineNote")
+                : null
         }
+        disabledReasonIcon={
+          gate === "not_continuable" ? Ban : gate === "unbound" ? Unplug : WifiOff
+        }
+        hint={gate === "queued" ? tc("sendQueuedNote") : null}
         placeholder={tc("replyPlaceholder")}
         sendLabel={t("send")}
         layout={layout}
@@ -949,6 +1024,31 @@ export function SendInstructionBox({
 // Pull the server's localized `error` string off a failed response, falling back
 // to the provided localized default for a non-JSON / fieldless body (mirrors the
 // ExecutionRow interrupt/resume error handling — never a silent generic).
+// Read a failed instruction POST's server message + structured 409 reason
+// (`error.details.reason`, cli-agent-session-sync). Both null on a non-JSON body.
+async function readInstructionError(
+  res: Response,
+): Promise<{ message: string | null; reason: unknown }> {
+  try {
+    const json = await res.json();
+    const err = json?.error;
+    if (typeof err === "string") return { message: err || null, reason: null };
+    if (err && typeof err === "object") {
+      const details = (err as { details?: unknown }).details;
+      return {
+        message: null,
+        reason:
+          details && typeof details === "object"
+            ? (details as { reason?: unknown }).reason ?? null
+            : null,
+      };
+    }
+  } catch {
+    // Non-JSON error body — the caller keeps its localized fallback.
+  }
+  return { message: null, reason: null };
+}
+
 async function extractError(res: Response, fallback: string): Promise<string> {
   try {
     const json = await res.json();

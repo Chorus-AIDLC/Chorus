@@ -5,6 +5,7 @@ import type { ProjectVisibility } from "@/services/project-access.service";
 import type { AuthContext } from "@/types/auth";
 import {
   listConnectionsForAgent,
+  scheduleCliSessionBinding,
   type ConnectionView,
 } from "@/services/daemon-connection.service";
 
@@ -779,7 +780,7 @@ export async function completeDirectoryRequest(params: {
       });
     }
   }
-  return prisma.daemonDirectoryRequest.update({
+  const completed = await prisma.daemonDirectoryRequest.update({
     where: { uuid: request.uuid },
     data: {
       status: params.status,
@@ -788,6 +789,12 @@ export async function completeDirectoryRequest(params: {
       completedAt: new Date(),
     },
   });
+  // cli-agent-session-sync D5: a successful roots/validate report is new discovered-
+  // directory evidence — bind unbound CLI sessions this connection now serves.
+  if (params.status === "success" && (request.operation === "roots" || request.operation === "validate")) {
+    scheduleCliSessionBinding(params.companyUuid, params.connectionUuid);
+  }
+  return completed;
 }
 
 export async function saveProjectAgentCwdPreference(params: {

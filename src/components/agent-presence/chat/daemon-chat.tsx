@@ -59,6 +59,7 @@ import {
   sessionExecStatusForRow,
   sessionExecutionsForComposer,
 } from "./session-execution";
+import { mergeCliSessionState } from "./session-cli-state";
 import { DaemonConnectCta } from "../daemon-connect-cta";
 
 const PAGE_SIZE = 12;
@@ -484,6 +485,8 @@ export function DaemonChat() {
         // connection. Matched strictly by this conversation's own idea/session id (no
         // cross-borrow).
         status: sessionExecStatusForRow(executionsByConnection, session),
+        // cli-agent-session-sync D7: a terminal holds this conversation (live CLI lease).
+        inTerminal: session.cli?.leased === true,
       }));
   }, [sessions, selectedAgentUuid, executionsByConnection, conversationName]);
 
@@ -822,12 +825,23 @@ export function DaemonChat() {
     return unsubscribe;
   }, [openUuid, subscribeTranscript]);
 
+  // ===== The open conversation's session, refreshed by the list poll =====
+  // The detail read happens once per selection, but the CLI-held state
+  // (cli-agent-session-sync D7: `cli` lease, `originBound` after lazy binding,
+  // `continuable`) changes while the conversation stays open. The 15 s first-page poll
+  // re-reads the SAME session row, so its fresher block is folded onto the detail's
+  // session (only when the list actually carries it).
+  const openSession = useMemo(
+    () => mergeCliSessionState(detail?.session ?? null, selectedSession?.session ?? null),
+    [detail, selectedSession],
+  );
+
   // ===== Origin connection resolution for the open conversation =====
   const originConnection = useMemo(() => {
-    const target = detail?.session.originConnectionUuid;
+    const target = openSession?.originConnectionUuid;
     if (!target) return null;
     return connections.find((c) => c.uuid === target) ?? null;
-  }, [detail, connections]);
+  }, [openSession, connections]);
   const originOnline = originConnection?.effectiveStatus === "online";
 
   // Whether the origin agent currently spans MULTIPLE distinct hosts. The transcript
@@ -894,10 +908,10 @@ export function DaemonChat() {
   // entityUuid, so a cross-connection match still stops the correct subprocess. Matched
   // strictly by the direct idea (never the root idea).
   const sessionExecutions = useMemo(() => {
-    const s = detail?.session;
+    const s = openSession;
     if (!s) return [];
     return sessionExecutionsForComposer(executionsByConnection, s);
-  }, [detail, executionsByConnection]);
+  }, [openSession, executionsByConnection]);
 
   // The session's executions keyed by uuid, so an entity-bearing turn resolves its deep
   // link via the per-turn `executionUuid` back-link.
@@ -1072,7 +1086,7 @@ export function DaemonChat() {
   // Everything else is identical, so it's a thin factory over the shared prop set.
   const renderTranscript = (footerLayout: "inline" | "stacked") => (
     <TranscriptView
-      session={detail?.session ?? null}
+      session={openSession}
       turns={turns}
       title={detailTitle}
       loading={detailLoading}

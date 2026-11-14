@@ -432,6 +432,66 @@ describe("App Server lifecycle", () => {
     expect(JSON.stringify(logger.error.mock.calls)).not.toContain(message);
   });
 
+  describe("transient thread writer conflict on resume (just-exited interactive Codex)", () => {
+    const conflict = (req, c) => c.send({ id: req.id, error: { code: -32603, message: "thread old-thread already has an active writer" } });
+
+    it("retries the SAME thread until the writer lock is released, never starting a new thread", async () => {
+      let resumes = 0;
+      const logger = { ...silent, info: vi.fn() };
+      const child = appServerChild({ handler(req, c) {
+        if (req.method === "thread/resume" && ++resumes <= 2) { conflict(req, c); return true; }
+        if (req.method === "thread/resume") { c.reply(req, { thread: { id: "old-thread" } }); return true; }
+        if (req.method === "turn/start") {
+          c.reply(req, { turn: { id: "turn-1" } });
+          c.send({ method: "turn/completed", params: { threadId: "old-thread", turn: { id: "turn-1", status: "completed", items: [] } } });
+          return true;
+        }
+      } });
+      const spawner = makeSpawner(child, { logger, getThreadIdFn: () => "old-thread", writerConflictRetryMs: 1_000, writerConflictIntervalMs: 5 });
+      expect(await wake(spawner)).toMatchObject({ backendSessionId: "old-thread", isNew: false, exitCode: 0 });
+      expect(methods(child)).toEqual(["initialize", "initialized", "thread/resume", "thread/resume", "thread/resume", "turn/start"]);
+      expect(child.requests.filter((r) => r.method === "thread/resume").every((r) => r.params.threadId === "old-thread")).toBe(true);
+      expect(logger.info.mock.calls.filter(([m]) => m.includes("still held"))).toHaveLength(1);
+    });
+
+    it("fails (no fallback, mapping kept) once the retry window is exhausted", async () => {
+      const child = appServerChild({ handler(req, c) {
+        if (req.method === "thread/resume") { conflict(req, c); return true; }
+      } });
+      const spawner = makeSpawner(child, { getThreadIdFn: () => "old-thread", writerConflictRetryMs: 30, writerConflictIntervalMs: 5 });
+      const result = await wake(spawner);
+      expect(result).toMatchObject({ backendSessionId: "old-thread", isNew: false, exitCode: null });
+      expect(result.wakeError.message).toContain("already has an active writer");
+      expect(methods(child)).not.toContain("thread/start");
+      expect(methods(child)).not.toContain("turn/start");
+      expect(methods(child).filter((m) => m === "thread/resume").length).toBeGreaterThan(1);
+      expect(spawner.setThreadIdFn).not.toHaveBeenCalled();
+    });
+
+    it("a writer conflict for a different thread is not retried", async () => {
+      const child = appServerChild({ handler(req, c) {
+        if (req.method === "thread/resume") { c.send({ id: req.id, error: { code: -32603, message: "thread other already has an active writer" } }); return true; }
+      } });
+      const spawner = makeSpawner(child, { getThreadIdFn: () => "old-thread", writerConflictRetryMs: 1_000, writerConflictIntervalMs: 5 });
+      expect(await wake(spawner)).toMatchObject({ exitCode: null });
+      expect(methods(child).filter((m) => m === "thread/resume")).toHaveLength(1);
+    });
+
+    it("a stop during the retry wait cancels promptly without turn/start", async () => {
+      const child = appServerChild({ handler(req, c) {
+        if (req.method === "thread/resume") { conflict(req, c); return true; }
+      } });
+      const spawner = makeSpawner(child, { getThreadIdFn: () => "old-thread", writerConflictRetryMs: 60_000, writerConflictIntervalMs: 30_000 });
+      const started = Date.now();
+      const running = wake(spawner);
+      await until(() => methods(child).includes("thread/resume"));
+      await killProcessTree(child, { sigintTimeoutMs: 30 });
+      expect((await running).exitCode).toBe(130);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(methods(child)).not.toContain("turn/start");
+    });
+  });
+
   it("preserves the old mapping when fresh fallback also fails", async () => {
     const child = appServerChild({ handler(req, c) {
       if (req.method.startsWith("thread/")) {

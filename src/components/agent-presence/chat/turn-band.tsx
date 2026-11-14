@@ -37,6 +37,7 @@ import {
   Rocket,
   RotateCw,
   Search,
+  SquareTerminal,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -75,6 +76,8 @@ const TRIGGER_META: Record<string, { icon: LucideIcon; labelKey: string }> = {
   idea_creation_requested: { icon: Lightbulb, labelKey: "triggerIdeaCreation" },
   research_requested: { icon: Search, labelKey: "triggerResearch" },
   resume: { icon: RotateCw, labelKey: "triggerResume" },
+  // cli-agent-session-sync: the terminal's own run (`chorus agents run`), synced from the CLI.
+  cli_session: { icon: SquareTerminal, labelKey: "triggerCliSession" },
 };
 
 // Compatibility instructions are execution context, not human-authored messages.
@@ -98,11 +101,16 @@ export function TurnBand({
   // collapsed-by-default "merged N events" disclosure listing each one's provenance.
   // Empty for an ordinary turn and for a standalone merged band.
   mergedEvents = [],
+  // cli-agent-session-sync D7: true while a terminal holds the conversation (live CLI
+  // lease). A `pending` human instruction then is QUEUED server-side until the terminal
+  // session ends — the band says so instead of implying an imminent run.
+  cliLeased = false,
 }: {
   turn: TurnWithMessagesView;
   agentName: string;
   linkedExecution: ExecutionView | null;
   mergedEvents?: MergedEvent[];
+  cliLeased?: boolean;
 }) {
   const t = useTranslations("daemonChat");
 
@@ -126,12 +134,23 @@ export function TurnBand({
   // the body ladder below on its own, so the `terminal`-gated relay/empty-instruction
   // branches never apply to it (they'd imply a turn that should have produced output).
   const terminal = turn.status === "ended" || interrupted;
+  // The terminal's own running turn (cli-agent-session-sync): it runs in the user's
+  // terminal, not under a daemon, so it is labelled "In terminal" rather than "Running".
+  const cliTurn = turn.trigger === "cli_session";
+  const runningInTerminal = running && cliTurn;
+  // A human instruction sent while a terminal holds the lease: stored pending and delivered
+  // only when the terminal session ends (release / lease expiry).
+  const queuedForTerminal = pending && cliLeased && turn.trigger === "human_instruction";
+  // A queued instruction retired because the conversation turned out not continuable.
+  const notContinuable = interrupted && turn.interruptedReason === "session_not_continuable";
 
   // Live status label (pending → Queued, running → Running, interrupted →
   // Interrupted, merged → Merged, ended → Ended). One generic "Interrupted" label covers
   // every `interruptedReason` (user/crash/shutdown/offline) per the elaboration decision.
   const statusLabel =
-    turn.status === "running"
+    runningInTerminal
+      ? t("turnStatusInTerminal")
+      : turn.status === "running"
       ? t("turnStatusRunning")
       : turn.status === "pending"
         ? t("turnStatusPending")
@@ -223,12 +242,14 @@ export function TurnBand({
             }`}
             title={interrupted && turn.interruptedReason ? turn.interruptedReason : undefined}
           >
-            {running && (
+            {runningInTerminal ? (
+              <SquareTerminal className="h-2.5 w-2.5" aria-hidden />
+            ) : running ? (
               <Loader2
                 className="h-2.5 w-2.5 motion-safe:animate-spin"
                 aria-hidden
               />
-            )}
+            ) : null}
             {statusLabel}
           </Badge>
           {/* Per-turn token usage (daemon-token-usage) — compact total + breakdown tooltip.
@@ -253,6 +274,18 @@ export function TurnBand({
           </p>
         )}
 
+        {/* Queued-for-terminal hint (cli-agent-session-sync D7): this instruction waits
+            for the terminal session to end; it is delivered then, not now. */}
+        {queuedForTerminal && (
+          <p
+            data-testid="turn-queued-terminal"
+            className="mt-2 inline-flex items-center gap-1.5 text-[12px] font-medium text-muted-foreground"
+          >
+            <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+            {t("turnQueuedForTerminal")}
+          </p>
+        )}
+
         {/* Messages — a quiet top-to-bottom transcript. A turn whose messages were
             trimmed by the rolling window (or that hasn't produced any yet) shows a
             calm placeholder rather than an empty gap (no silent empty).
@@ -268,10 +301,24 @@ export function TurnBand({
             (turn.interruptedReason === "crash" || turn.interruptedReason === "invalid_path") && (
               <TurnFailure reason={turn.interruptedReason} wakeError={turn.wakeError} />
             )}
+          {notContinuable && (
+            <div
+              data-testid="turn-not-continuable"
+              className="flex flex-col gap-2 rounded-lg border border-[#EADFCB] dark:border-[#3a3222] bg-[#FBF5EA] dark:bg-[#221d14] px-3 py-2.5"
+            >
+              <p className="text-[12px] leading-relaxed text-[#8A6D3B] dark:text-[#D9B473]">
+                {t("turnNotContinuableNote")}
+              </p>
+            </div>
+          )}
           {visibleMessages.length > 0 ? (
             visibleMessages.map((m) => (
               <Message key={m.uuid} message={m} agentName={agentName} />
             ))
+          ) : notContinuable || queuedForTerminal ? null : runningInTerminal ? (
+            <p className="text-[12px] italic text-muted-foreground">
+              {t("turnCliSessionNote")}
+            </p>
           ) : merged ? (
             // A coalesced-away turn never ran on its own — its wake was folded into the
             // absorbing turn. Present that settled fact honestly (NOT the "no transcript"

@@ -86,6 +86,9 @@ const NOW = "2026-06-22T03:00:00.000Z";
 
 function sessionView(overrides: Partial<SessionView> = {}): SessionView {
   return {
+    cli: null,
+    originBound: true,
+    continuable: true,
     uuid: "sess-1",
     agentUuid: "agent-1",
     sessionId: "8974ee58-1111-2222-3333-444455556666",

@@ -16,7 +16,7 @@
 // relative `lastTurnAt`. Reuses the warm-deck vocabulary + the StatusDot pulse.
 
 import { useTranslations } from "next-intl";
-import { MessageCirclePlus, PauseCircle, Sparkles, TriangleAlert } from "lucide-react";
+import { MessageCirclePlus, PauseCircle, Sparkles, SquareTerminal, TriangleAlert } from "lucide-react";
 import { AgentAvatar } from "@/components/ui/agent-avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -51,12 +51,24 @@ export interface ConversationRow {
   title: string;
   ideaAnchored: boolean;
   status: SessionExecStatus;
+  // cli-agent-session-sync D7: a terminal (`chorus agents run`) holds this conversation
+  // right now (live CLI lease). Takes precedence over the daemon execution status.
+  inTerminal?: boolean;
 }
 
 // The per-conversation status indicator: a running pulse (terracotta), a paused glyph
 // for a user-interrupt, an alert glyph for a crash/error, or a quiet idle dot. This is
 // the SESSION's state, so two conversations on the same agent can read differently.
-function SessionStatusIndicator({ status }: { status: SessionExecStatus }) {
+function SessionStatusIndicator({
+  status,
+  inTerminal = false,
+}: {
+  status: SessionExecStatus;
+  inTerminal?: boolean;
+}) {
+  if (inTerminal) {
+    return <SquareTerminal aria-hidden className="h-3.5 w-3.5 text-primary" />;
+  }
   if (status === "running") {
     return (
       <span aria-hidden className="relative inline-flex h-2.5 w-2.5 items-center justify-center">
@@ -92,8 +104,9 @@ function Row({
   const formatRelative = useRelativeTime();
   // A short status word under the title when the conversation is not idle, so the
   // indicator's meaning is never icon-only (accessible + scannable).
-  const statusLabel =
-    row.status === "running"
+  const statusLabel = row.inTerminal
+    ? t("statusInTerminal")
+    : row.status === "running"
       ? t("running")
       : row.status === "interrupted"
         ? t("statusInterrupted")
@@ -106,7 +119,7 @@ function Row({
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
       data-conversation-key={conversationKey(row.session)}
-      data-session-status={row.status ?? "idle"}
+      data-session-status={row.inTerminal ? "terminal" : row.status ?? "idle"}
       className={`relative h-auto w-full justify-start gap-0 rounded-none px-0 py-0 text-left transition-colors ${
         selected
           ? "bg-accent hover:bg-accent"
@@ -121,7 +134,7 @@ function Row({
       )}
       <span className={`flex w-full items-center gap-3 py-3.5 ${child ? "pl-8 pr-4" : "px-4"}`}>
         <span className="flex w-2.5 shrink-0 justify-center">
-          <SessionStatusIndicator status={row.status} />
+          <SessionStatusIndicator status={row.status} inTerminal={row.inTerminal} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
@@ -142,7 +155,7 @@ function Row({
             {statusLabel && (
               <span
                 className={`text-[10px] font-semibold uppercase tracking-wide ${
-                  row.status === "running"
+                  row.inTerminal || row.status === "running"
                     ? "text-primary"
                     : row.status === "error"
                       ? "text-destructive"

@@ -47,6 +47,21 @@ chorus agents run --name work --type codex -- resume # override the backend, the
   (see below); the explicit tokens themselves are never rewritten or rejected by
   the persistent-config validator. Interactive resume/subcommands remain available.
   The agent inherits your terminal, and `chorus agents run` exits with its exit code.
+- **Session sync (default on).** The run is registered as a Chorus daemon session
+  before launch: its transcript (user/assistant text only) appears live in Chorus,
+  and messages sent from Chorus while it runs are queued, then continued by the
+  local daemon serving the same machine + directory once you exit. Claude Code is
+  launched with a derived `--session-id` (the same id the daemon resumes); passing
+  your own `--session-id` / `-r`/`--resume` / `-c`/`--continue` (or `--fork-session`,
+  `--from-pr`, `--bg`, `-w`/`--worktree`) keeps the run visible but not continuable.
+  Claude subcommands and `--version`/`--help` are not synced. `--idea <uuid>`
+  anchors the session to an Idea; `--no-sync` launches exactly as before with no
+  Chorus session calls. Sync never blocks the launch: at most one warning line is
+  printed before launch (e.g. *no daemon running here; session can be continued
+  once a daemon runs in this directory*, or *server too old*) and one after exit if
+  the transcript could not be fully uploaded; details go to
+  `~/.chorus/logs/cli-session-sync.log` (API key redacted). Other backends are
+  registered as not-continuable until their adapters land.
 
 See `chorus agents run --help`.
 

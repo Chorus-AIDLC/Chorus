@@ -123,7 +123,8 @@ interface ActiveSessionAccumulator {
   sessionUuid: string;
   ideaUuid: string | null;
   agentUuid: string;
-  originConnectionUuid: string;
+  // Null for a CLI-registered session not yet bound to a daemon (cli-agent-session-sync D5).
+  originConnectionUuid: string | null;
   activities: ReadonlySet<string>;
   canOpen: boolean;
 }
@@ -137,7 +138,8 @@ export interface ActiveIdeaSession {
   sessionUuid: string;
   ideaUuid: string;
   agentUuid: string;
-  originConnectionUuid: string;
+  // Null for a CLI-registered session not yet bound to a daemon (cli-agent-session-sync D5).
+  originConnectionUuid: string | null;
   activities: ReadonlySet<string>;
   agentName: string | null;
   host: string | null;
@@ -312,7 +314,7 @@ export function deriveActiveSessionsByIdea(
   const grouped = new Map<string, ActiveIdeaSession[]>();
   for (const session of state.sessions.values()) {
     if (!session.ideaUuid) continue;
-    const connection = connectionsByUuid.get(session.originConnectionUuid);
+    const connection = session.originConnectionUuid ? connectionsByUuid.get(session.originConnectionUuid) : undefined;
     const item: ActiveIdeaSession = {
       sessionUuid: session.sessionUuid,
       ideaUuid: session.ideaUuid,
@@ -333,7 +335,7 @@ export function deriveActiveSessionsByIdea(
     sessions.sort(
       (a, b) =>
         a.agentUuid.localeCompare(b.agentUuid) ||
-        a.originConnectionUuid.localeCompare(b.originConnectionUuid) ||
+        (a.originConnectionUuid ?? "").localeCompare(b.originConnectionUuid ?? "") ||
         a.sessionUuid.localeCompare(b.sessionUuid),
     );
   }

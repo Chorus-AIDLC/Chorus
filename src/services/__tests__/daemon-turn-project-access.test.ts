@@ -15,9 +15,9 @@ const fixture = vi.hoisted(() => {
     notifications: [] as Array<{ entityUuid: string; projectUuid: string }>,
   };
   const sessions = [
-    { uuid: "task-session", sessionId: "standalone-task", directIdeaUuid: null, runtimeCwd: "/private/task", companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection" },
-    { uuid: "comment-session", sessionId: "project-comment", directIdeaUuid: null, runtimeCwd: "/private/comment", companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection" },
-    { uuid: "adhoc-session", sessionId: "adhoc-key", directIdeaUuid: null, runtimeCwd: null, companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection" },
+    { uuid: "task-session", sessionId: "standalone-task", directIdeaUuid: null, runtimeCwd: "/private/task", companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection", continuable: true },
+    { uuid: "comment-session", sessionId: "project-comment", directIdeaUuid: null, runtimeCwd: "/private/comment", companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection", continuable: true },
+    { uuid: "adhoc-session", sessionId: "adhoc-key", directIdeaUuid: null, runtimeCwd: null, companyUuid: "company", agentUuid: "agent", originConnectionUuid: "connection", continuable: true },
   ];
   const turns = [
     { uuid: "task-turn", sessionUuid: "task-session", seq: 1, trigger: "task_assigned", promptText: null, operationPayload: null, status: "pending", session: sessions[0] },
@@ -25,7 +25,8 @@ const fixture = vi.hoisted(() => {
     { uuid: "adhoc-turn", sessionUuid: "adhoc-session", seq: 1, trigger: "human_instruction", promptText: "Hello", operationPayload: null, status: "pending", session: sessions[2] },
   ];
   const sessionMatches = (session: typeof sessions[number], where: Record<string, unknown>) =>
-    Object.entries(where).every(([key, value]) => session[key as keyof typeof session] === value);
+    // `OR` is the isCliLeased gate (notCliLeasedWhere); these fixture sessions hold no CLI lease.
+    Object.entries(where).every(([key, value]) => key === "OR" || session[key as keyof typeof session] === value);
   const prisma = {
     task: { findFirst: vi.fn(async ({ where }: { where: { uuid: string; companyUuid: string } }) =>
       state.taskExists && where.companyUuid === "company" && where.uuid === "standalone-task" ? { projectUuid: "private-project" } : null) },
@@ -50,10 +51,13 @@ const fixture = vi.hoisted(() => {
     notification: { findFirst: vi.fn(async ({ where }: { where: { companyUuid: string; recipientUuid: string; entityUuid: string } }) =>
       where.companyUuid === "company" && where.recipientUuid === "agent"
         ? state.notifications.find((n) => n.entityUuid === where.entityUuid && n.projectUuid !== "") ?? null : null) },
+    // CLI lease sweep on backfill: no fixture session holds an expired lease.
+    daemonSession: { findMany: vi.fn(async () => []) },
     daemonSessionTurn: {
-      findFirst: vi.fn(async ({ where }: { where: { uuid?: string; sessionUuid?: string; trigger?: { not: string }; session: Record<string, unknown> } }) =>
+      findFirst: vi.fn(async ({ where }: { where: { uuid?: string; sessionUuid?: string; trigger?: { not?: string; notIn?: string[] }; session: Record<string, unknown> } }) =>
         turns.find((t) =>
-          (where.uuid ? t.uuid === where.uuid : t.sessionUuid === where.sessionUuid && t.trigger !== where.trigger?.not) &&
+          (where.uuid ? t.uuid === where.uuid : t.sessionUuid === where.sessionUuid &&
+            t.trigger !== where.trigger?.not && !(where.trigger?.notIn ?? []).includes(t.trigger)) &&
           sessionMatches(t.session, where.session)) ?? null),
       findMany: vi.fn(async ({ where }: { where: { status: string; session: Record<string, unknown> } }) =>
         turns.filter((t) => t.status === where.status && sessionMatches(t.session, where.session))),

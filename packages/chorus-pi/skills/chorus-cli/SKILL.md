@@ -35,7 +35,7 @@ Agent configuration lives in `~/.chorus/daemon.json`; `chorus agents` is the CRU
 - `chorus agents remove <name|uuid>` — remove a configured agent from `~/.chorus/daemon.json`
   (matched by UUID or name; an ambiguous name → use the UUID).
 
-- `chorus agents run --name <name|uuid> [--type <type>] [--] [agent args…]` — launch a
+- `chorus agents run --name <name|uuid> [--type <type>] [--idea <uuid>] [--no-sync] [--] [agent args…]` — launch a
   configured agent's binary in the FOREGROUND with its Chorus connection injected into the
   child only (`CHORUS_URL` / `CHORUS_API_KEY` / `CHORUS_AGENT_PROFILE`; nothing is exported to
   the parent shell, and the key is never printed). Agent selection: single agent by default; else `--name`, else `CHORUS_AGENT_PROFILE`; ambiguous/none →
@@ -44,6 +44,23 @@ Agent configuration lives in `~/.chorus/daemon.json`; `chorus agents` is the CRU
   `claude-code`/`claude`→`claude`, `codex`→`codex`, `kiro`→`kiro-cli`, `pi`→`pi`,
   `opencode`→`opencode`, `openclaw`→`openclaw`, `dsh`→`dsh-jsonrpc-agent`. Agents added as
   opencode/openclaw/dsh are stored as `offline` → pass `--type` explicitly to launch them.
+
+  **Session sync (default on).** Each run is registered as a Chorus daemon conversation for
+  that agent: the user/assistant text (no tool calls or thinking) appears live in Chorus
+  (Kiro uploads on exit). While the terminal run is active the conversation shows
+  "Running in terminal", and messages sent from Chorus are **queued**, never injected into
+  the TUI. When the run exits (or dies — the server lease expires within ~60 s), the local
+  `chorus daemon` serving the **same machine + directory** resumes the SAME backend
+  conversation and answers the queued messages. No daemon running there → one warning line
+  at launch; the session becomes continuable once a daemon starts in that directory.
+  - `--idea <uuid>` anchors the conversation to an Idea (default: ad-hoc).
+  - `--no-sync` registers nothing (zero Chorus session calls) — the plain foreground launch.
+  - Claude Code / Pi get a derived session id injected; passing your own session flag
+    after `--` (e.g. `--session-id`, `--resume`, `--continue`) keeps the run visible but not
+    continuable. Codex / TRAE / Kiro ids are discovered after launch. opencode / openclaw /
+    dsh are visible only (not continuable).
+  - Sync never blocks the agent: problems print at most one warning line; details go to
+    `~/.chorus/logs/cli-session-sync.log` (the API key is never logged).
 
 ## 3. Connection environment variables
 

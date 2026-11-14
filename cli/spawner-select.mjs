@@ -22,6 +22,7 @@ import { CODEX_FAMILY } from "./codex-family.mjs";
 import { DshSpawner } from "./dsh-spawner.mjs";
 import { KiroSpawner } from "./kiro-spawner.mjs";
 import { PiSpawner } from "./pi-spawner.mjs";
+import { verifyKiroSessionOwnership, recordKiroSessionOwnership } from "./kiro-session-ownership.mjs";
 
 /**
  * A fail-closed spawner for the `offline` agentType. It satisfies the shared
@@ -76,7 +77,14 @@ export function selectSpawner(agentType, opts = {}) {
     return new CodexSpawner({ ...opts, profile: CODEX_FAMILY.trae });
   }
   if (agentType === "kiro") {
-    return new KiroSpawner(opts);
+    // Mapped Kiro sessions resume only when ~/.chorus/kiro-session-owners.json records
+    // them as owned by this agent for this anchor (written by `chorus agents run` sync
+    // and refreshed by the daemon after each resumed run). Injectable overrides win.
+    return new KiroSpawner({
+      verifySessionOwnershipFn: (o) => verifyKiroSessionOwnership(o, { logger }),
+      recordSessionOwnershipFn: (rec) => { recordKiroSessionOwnership(rec, { logger }); },
+      ...opts,
+    });
   }
   if (agentType === "dsh") {
     return new DshSpawner(opts);

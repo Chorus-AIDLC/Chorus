@@ -2050,7 +2050,17 @@
     "detailHost": "ホスト",
     "detailStarted": "開始",
     "copySessionId": "セッション ID をコピー",
-    "sessionIdCopied": "コピーしました！"
+    "sessionIdCopied": "コピーしました！",
+    "triggerCliSession": "ターミナル",
+    "runningInTerminal": "ターミナルで実行中",
+    "statusInTerminal": "ターミナル",
+    "turnStatusInTerminal": "ターミナル",
+    "turnCliSessionNote": "ターミナルで実行中です。出力は同期され次第ここに表示されます。",
+    "turnQueuedForTerminal": "キュー済み — ターミナルセッション終了後に配信されます",
+    "turnNotContinuableNote": "未配信 — この会話は Chorus から続行できません。",
+    "sendQueuedNote": "ターミナルで実行中 — 今送信したメッセージはキューに入り、ターミナルセッション終了後に配信されます。",
+    "sendUnboundNote": "この会話の元のマシンとディレクトリで、このエージェントの Chorus デーモンが実行されていません。続行するにはそこでデーモンを起動してください。",
+    "sendNotContinuableNote": "この会話は Chorus から続行できません — ターミナルで開始した際にエージェントセッションを特定できませんでした。"
   },
   "agentPresence": {
     "online": "オンライン",

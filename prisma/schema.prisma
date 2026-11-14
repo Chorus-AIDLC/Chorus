@@ -835,7 +835,22 @@ model DaemonSession {
   // → DaemonConnection.uuid (weak ref, no DB FK). The connection/cwd that owns
   //   the on-disk Claude transcript. Fixed at creation; continuation is only ever
   //   routed here, because `claude --resume <sessionId>` is cwd/machine-bound.
-  originConnectionUuid     String
+  //   Nullable since cli-agent-session-sync (D5 lazy origin binding): a session registered
+  //   by `chorus agents run` before any daemon serves its (host, cwd) stays unbound (null)
+  //   until a matching connection registers; sends to an unbound session are rejected.
+  originConnectionUuid     String?
+  // CLI lease (cli-agent-session-sync D1): while a foreground `chorus agents run` holds the
+  // conversation, `cliLeaseHolder` is its opaque per-run id and `cliLeaseExpiresAt` the
+  // heartbeat-renewed expiry. A live lease queues every pending turn (isCliLeased gate).
+  cliLeaseHolder           String?
+  cliLeaseExpiresAt        DateTime?
+  // The launching host + absolute cwd of a CLI-registered session (null for daemon-created
+  // sessions). Used for lazy origin binding and the session read payload's `cli` block.
+  cliHost                  String?
+  cliCwd                   String?
+  // Stored continuation flag: false when the CLI could not establish the backend resume
+  // identity (user-supplied resume flag, ambiguous discovery). Sends are then rejected.
+  continuable              Boolean             @default(true)
   // Directed discovered cwd. Null keeps the legacy connection-bound cwd behavior.
   // Once set, every continuation uses this value rather than the anchor connection cwd.
   runtimeCwd               String?
@@ -862,6 +877,7 @@ model DaemonSession {
   @@unique([agentUuid, sessionId])
   @@index([companyUuid, agentUuid])
   @@index([originConnectionUuid])
+  @@index([agentUuid, cliHost])
 }
 
 // One turn (wake) on a DaemonSession. Every wake — autonomous (task_assigned /
@@ -877,7 +893,7 @@ model DaemonSessionTurn {
   // immutable first-wake compatibility anchor.
   backendSessionId  String?
   seq               Int // monotonic per session
-  trigger           String // task_assigned | mentioned | elaboration | elaboration_verified | start_development | yolo_requested | resume | human_instruction | idea_creation_requested | research_requested
+  trigger           String // task_assigned | mentioned | elaboration | elaboration_verified | start_development | yolo_requested | resume | human_instruction | idea_creation_requested | research_requested | cli_session (foreground CLI run; never daemon-owned)
   promptText        String? // human instruction body or server-composed operation compatibility snapshot
   operationPayload  Json? // versioned dedicated operation; historical rows remain null
   wakeContext       Json?
@@ -916,6 +932,10 @@ model DaemonSessionTurn {
   // Weak ref to the live DaemonExecution row this turn corresponds to (no DB FK;
   // execution rows are reconciled/transient).
   executionUuid     String?
+  // cli-agent-session-sync D4: set (once, conditionally) when a CLI-lease drain pinged this
+  // queued turn to its origin daemon. The per-turn claim that makes concurrent drain
+  // triggers (release / expiry sweep / lazy check / lazy bind) deliver exactly once.
+  drainedAt         DateTime?
   startedAt         DateTime?
   endedAt           DateTime?
   createdAt         DateTime                  @default(now())

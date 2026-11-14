@@ -2050,7 +2050,17 @@
     "detailHost": "Host",
     "detailStarted": "Started",
     "copySessionId": "Copy session ID",
-    "sessionIdCopied": "Copied!"
+    "sessionIdCopied": "Copied!",
+    "triggerCliSession": "Terminal",
+    "runningInTerminal": "Running in terminal",
+    "statusInTerminal": "In terminal",
+    "turnStatusInTerminal": "In terminal",
+    "turnCliSessionNote": "Running in the terminal — its output appears here as it syncs.",
+    "turnQueuedForTerminal": "Queued — delivered when the terminal session ends",
+    "turnNotContinuableNote": "Not delivered — this conversation can't be continued from Chorus.",
+    "sendQueuedNote": "Running in terminal — messages you send now are queued and delivered when the terminal session ends.",
+    "sendUnboundNote": "No Chorus daemon is running for this agent on the conversation's origin machine and directory. Start one there to continue this conversation.",
+    "sendNotContinuableNote": "This conversation can't be continued from Chorus — its agent session couldn't be identified when it was started in the terminal."
   },
   "agentPresence": {
     "online": "online",
